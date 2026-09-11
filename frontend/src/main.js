@@ -17565,22 +17565,59 @@ if (viewerScrollContainer) {
       const selection = window.getSelection();
       if (selection && !selection.isCollapsed) return;
 
-      // ── 페이지 연결 뱃지 클릭 시 이전 페이지로 이동 ──
+      // ── 페이지 연결 뱃지 클릭 시 이전/다음 페이지 해당 문장으로 이동 ──
       const pageBadge = e.target.closest('.trans-page-link-badge');
       if (pageBadge && pageBadge.dataset.pageLink) {
         e.preventDefault();
         e.stopPropagation();
         const targetPage = parseInt(pageBadge.dataset.pageLink, 10);
         if (!isNaN(targetPage) && targetPage >= 1) {
-          const target = viewerScrollContainer.querySelector(`.page-pair[data-page="${targetPage}"]`) || viewerScrollContainer.querySelector(`.pdf-page-wrapper[data-page="${targetPage}"]`) || viewerScrollContainer.querySelector(`[data-page="${targetPage}"]`);
-          if (target) {
-            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          }
+          const curPageWrapper = pageBadge.closest('[data-page]');
+          const curPage = curPageWrapper ? parseInt(curPageWrapper.dataset.page, 10) : NaN;
           const sents = viewerScrollContainer.querySelectorAll(`.trans-sentence[data-page="${targetPage}"]`);
+
+          let targetSent = null;
           if (sents.length > 0) {
-            const last = sents[sents.length - 1];
-            last.classList.add('active');
-            setTimeout(() => last.classList.remove('active'), 2500);
+            targetSent = (!isNaN(curPage) && targetPage > curPage) ? sents[0] : sents[sents.length - 1];
+          }
+
+          if (targetSent) {
+            targetSent.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            targetSent.classList.add('active', 'sentence-pulse');
+            setTimeout(() => targetSent.classList.remove('active', 'sentence-pulse'), 3000);
+
+            const sentenceIdx = parseInt(targetSent.dataset.sentenceIdx, 10);
+            if (!isNaN(sentenceIdx)) {
+              const sentenceRanges = state.pdfPageSentences && state.pdfPageSentences[targetPage];
+              if (sentenceRanges) {
+                const sRange = sentenceRanges.find(r => {
+                  const idx = r.sentenceIdx >= 10000 ? (r.originalSentenceIdx ?? r.sentenceIdx) : r.sentenceIdx;
+                  return idx === sentenceIdx;
+                });
+                if (sRange) {
+                  applyActiveHighlight(targetPage, sRange);
+                  const vtm = state.virtualTextMaps && state.virtualTextMaps[targetPage];
+                  const pw = viewerScrollContainer.querySelector(`.pdf-page-wrapper[data-page="${targetPage}"]`);
+                  if (vtm && pw) {
+                    const textLayer = pw.querySelector('.textLayer');
+                    if (textLayer) {
+                      const rects = getSentenceRects(sRange, vtm, textLayer);
+                      if (rects.length > 0) {
+                        const overlay = getOrCreateOverlay(pw);
+                        renderSentenceOverlay(overlay, rects, 'sentence-pulse-box');
+                        setTimeout(() => clearOverlayBoxes(overlay, 'sentence-pulse-box'), 2500);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          } else {
+            const target = viewerScrollContainer.querySelector(`.page-pair[data-page="${targetPage}"]`) || viewerScrollContainer.querySelector(`[data-page="${targetPage}"]`);
+            if (target) {
+              const blockPos = (!isNaN(curPage) && targetPage < curPage) ? 'end' : 'start';
+              target.scrollIntoView({ behavior: 'smooth', block: blockPos });
+            }
           }
           return;
         }

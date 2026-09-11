@@ -14631,6 +14631,8 @@ function buildChatWelcomeHtml() {
 
 function attachEvidenceToBubble(bubble, evidenceItems = []) {
   if (!bubble || !evidenceItems.length) return
+  if (!state.chatEvidenceItems) state.chatEvidenceItems = []
+  state.chatEvidenceItems.push(...evidenceItems)
   const byPage = new Map()
   evidenceItems.forEach(item => {
     const page = Number(item.page_num)
@@ -15374,8 +15376,25 @@ function initChatListeners() {
     if (!citation) return
     const page = Number(citation.dataset.pageCitation)
     if (Number.isInteger(page) && page >= 1 && page <= state.totalPages) {
-      const quote = citation.dataset.evidenceQuote
+      let quote = citation.dataset.evidenceQuote
       const occurrence = Number(citation.dataset.evidenceOccurrence || 1)
+      const evId = citation.dataset.evidenceId
+
+      if (!quote && evId && state.chatEvidenceItems) {
+        const found = state.chatEvidenceItems.find(it => it.evidence_id === evId)
+        if (found) {
+          quote = found.quote
+          citation.dataset.evidenceQuote = quote
+        }
+      }
+      if (!quote && state.chatEvidenceItems) {
+        const pageItems = state.chatEvidenceItems.filter(it => Number(it.page_num) === page)
+        if (pageItems.length > 0) {
+          quote = pageItems[0].quote
+          citation.dataset.evidenceQuote = quote
+        }
+      }
+
       if (quote) locateTermInPdf(page, quote, occurrence)
       else scrollToPage(viewerScrollContainer, page)
     }
@@ -17557,7 +17576,7 @@ if (viewerScrollContainer) {
 
   // 클릭: PDF textLayer 클릭 → active 하이라이트 + 번역 스크롤
   //        trans-sentence 클릭 → PDF 스크롤
-  viewerScrollContainer.addEventListener('click', (e) => {
+  viewerScrollContainer.addEventListener('click', async (e) => {
     try {
       state.hoverSelectionDisabled = true;
       if (sentenceHoverTimer) { clearTimeout(sentenceHoverTimer); sentenceHoverTimer = null; }
@@ -17574,11 +17593,46 @@ if (viewerScrollContainer) {
         if (!isNaN(targetPage) && targetPage >= 1) {
           const curPageWrapper = pageBadge.closest('[data-page]');
           const curPage = curPageWrapper ? parseInt(curPageWrapper.dataset.page, 10) : NaN;
-          const sents = viewerScrollContainer.querySelectorAll(`.trans-sentence[data-page="${targetPage}"]`);
+          const sents = Array.from(viewerScrollContainer.querySelectorAll(`.trans-sentence[data-page="${targetPage}"]`));
 
           let targetSent = null;
           if (sents.length > 0) {
-            targetSent = (!isNaN(curPage) && targetPage > curPage) ? sents[0] : sents[sents.length - 1];
+            // 1. 클릭된 뱃지가 속한 문장의 본문 텍스트 추출 ([Np 연결] 태그 제거)
+            const currentSentEl = pageBadge.closest('.trans-sentence');
+            const rawSentText = currentSentEl ? currentSentEl.textContent.replace(/\[\d+p\s*연결\]\s*/g, '').trim() : '';
+            const cleanSentProbe = rawSentText.replace(/[^a-zA-Z0-9가-힣]/g, '').toLowerCase().slice(0, 35);
+
+            // 2. 대상 페이지에서 본문 내용이 일치하는 연결 문장 우선 검색
+            if (cleanSentProbe) {
+              targetSent = sents.find(el => {
+                const elClean = el.textContent.replace(/[^a-zA-Z0-9가-힣]/g, '').toLowerCase();
+                return elClean.includes(cleanSentProbe) || (cleanSentProbe.length > 15 && elClean.slice(0, 30) === cleanSentProbe.slice(0, 30));
+              });
+            }
+
+            // 3. 내용 일치 검색 실패 시, 방향별 지능적 본문 문장 탐색
+            if (!targetSent) {
+              const captionOrTableRe = /^(?:fig(?:ure)?\.?|table|tab\.?|표|그림|도표)\s*[\d\w\.\-]+/i;
+              const isNonBody = (el) => {
+                if (el.closest('figcaption, .caption, .table-caption, figure, table')) return true;
+                const text = el.textContent.trim();
+                return captionOrTableRe.test(text);
+              };
+
+              if (!isNaN(curPage) && targetPage > curPage) {
+                // 다음 페이지로 이동: 첫 번째 본문 문장 (또는 [Np 연결]이 달린 문장)
+                targetSent = sents.find(el => el.textContent.includes('연결]') || !isNonBody(el)) || sents[0];
+              } else {
+                // 이전 페이지로 이동: 표나 그림 캡션이 아닌 마지막 실제 본문 문장 역순 탐색
+                for (let i = sents.length - 1; i >= 0; i--) {
+                  if (!isNonBody(sents[i])) {
+                    targetSent = sents[i];
+                    break;
+                  }
+                }
+                if (!targetSent) targetSent = sents[sents.length - 1];
+              }
+            }
           }
 
           if (targetSent) {
@@ -17596,11 +17650,19 @@ if (viewerScrollContainer) {
                 });
                 if (sRange) {
                   applyActiveHighlight(targetPage, sRange);
-                  const vtm = state.virtualTextMaps && state.virtualTextMaps[targetPage];
+                  let vtm = state.virtualTextMaps && state.virtualTextMaps[targetPage];
                   const pw = viewerScrollContainer.querySelector(`.pdf-page-wrapper[data-page="${targetPage}"]`);
-                  if (vtm && pw) {
+                  if (pw) {
+                    if (!isVtmFresh(vtm)) {
+                      const deadline = Date.now() + 1500;
+                      while (Date.now() < deadline) {
+                        await new Promise(resolve => setTimeout(resolve, 100));
+                        vtm = state.virtualTextMaps && state.virtualTextMaps[targetPage];
+                        if (isVtmFresh(vtm)) break;
+                      }
+                    }
                     const textLayer = pw.querySelector('.textLayer');
-                    if (textLayer) {
+                    if (textLayer && vtm) {
                       const rects = getSentenceRects(sRange, vtm, textLayer);
                       if (rects.length > 0) {
                         const overlay = getOrCreateOverlay(pw);

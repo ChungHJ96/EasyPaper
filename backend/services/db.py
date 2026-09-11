@@ -1261,6 +1261,26 @@ def db_get_chat_history(doc_id: str, include_revision: bool = False) -> List[Dic
                 item["bbox"] = json.loads(item["bbox"]) if item.get("bbox") else None
                 item["verification"] = json.loads(item["verification"]) if item.get("verification") else None
                 evidence_by_answer[answer_id].append(item)
+        # 폴백: 특정 답변에 연결된 chat_evidence 행이 비어있더라도 메시지 본문에 인용된 evidence_id가 있다면 복원
+        for row in rows:
+            if row["role"] != "assistant":
+                continue
+            aid = int(row["id"])
+            if not evidence_by_answer.get(aid):
+                eids = list(dict.fromkeys(re.findall(r"ev_[A-Za-z0-9_-]+", row["content"] or "")))
+                if eids:
+                    q_holders = ",".join("?" for _ in eids)
+                    fallback_rows = conn.execute(
+                        f"""SELECT evidence_id, content_revision, page_num, section, quote,
+                                   translation_quote, char_start, char_end, occurrence, bbox, verification
+                            FROM chat_evidence WHERE doc_id = ? AND evidence_id IN ({q_holders})""",
+                        [doc_id] + eids,
+                    ).fetchall()
+                    for f_row in fallback_rows:
+                        item = dict(f_row)
+                        item["bbox"] = json.loads(item["bbox"]) if item.get("bbox") else None
+                        item["verification"] = json.loads(item["verification"]) if item.get("verification") else None
+                        evidence_by_answer[aid].append(item)
     return [{
         "id": int(row["id"]), "role": row["role"], "content": row["content"],
         "content_revision": int(row["content_revision"]),

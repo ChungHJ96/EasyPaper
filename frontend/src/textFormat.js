@@ -25,10 +25,11 @@ export function linkPageCitations(html, totalPages) {
     return `<button type="button" class="chat-page-citation" data-page-citation="${start}" data-page-citation-end="${end}" title="${start}–${end}페이지로 이동">[pp.${start}-${end}]</button>`
   })
   // Match both standard [p.8] and unparsed [p.8, E:ev_...] or [p.8, ev_...]
-  const singleLinked = rangeLinked.replace(/\[p\.(\d+)(?:[,\s]*(?:E:\s*)?ev_[A-Za-z0-9_-]+)?\]/gi, (match, pageText) => {
+  const singleLinked = rangeLinked.replace(/\[p\.(\d+)(?:[,\s]*(?:E:\s*)?(ev_[A-Za-z0-9_-]+))?\]/gi, (match, pageText, evId) => {
     const page = Number(pageText)
     if (!Number.isInteger(page) || page < 1 || page > maximum) return match
-    return `<button type="button" class="chat-page-citation" data-page-citation="${page}" title="${page}페이지로 이동">[p.${page}]</button>`
+    const evAttr = evId ? ` data-evidence-id="${evId}"` : ''
+    return `<button type="button" class="chat-page-citation" data-page-citation="${page}"${evAttr} title="${page}페이지로 이동">[p.${page}]</button>`
   })
   // Clean up any remaining unparsed standalone [E:ev_...] tags
   return singleLinked.replace(/\[(?:E:\s*)?ev_[A-Za-z0-9_-]+\]/gi, '')

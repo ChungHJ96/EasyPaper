@@ -54,6 +54,75 @@ async def import_url(body: UrlImportRequest, current_user: str = Depends(get_cur
             raise HTTPException(status_code=409, detail={"code": "upload_id_conflict"})
     else:
         doc_id = str(uuid.uuid4())
+
+    from services.zotero_import import resolve_zotero_link
+    local_pdf = resolve_zotero_link(body.url)
+    if local_pdf and os.path.isfile(local_pdf):
+        session_dir = Path(UPLOAD_DIR) / doc_id
+        try:
+            session_dir.mkdir(parents=True, exist_ok=False)
+            pdf_path = session_dir / "document.pdf"
+            shutil.copyfile(local_pdf, pdf_path)
+            file_size_bytes = pdf_path.stat().st_size
+            from services.document_tasks import create_task
+            from services.parse_job import execute_parse_task
+            from services.pdf_parser import extract_pages, get_pdf_metadata
+            from services.translation_job import start_job
+            from services.insight_job import start_keyword_job, start_summary_job
+            from routers.upload import sessions
+            filename = Path(local_pdf).name or "document.pdf"
+            options = body.model_dump(exclude={"url", "upload_id"}) | {
+                "filename": filename,
+                "username": current_user,
+                "source_lang": source_lang,
+                "target_lang": target_lang,
+                "file_size_mb": file_size_bytes / 1048576,
+            }
+            task = create_task(doc_id, "parse", options, status="queued")
+            parsed = await execute_parse_task(
+                task["id"], sessions,
+                page_extractor=extract_pages,
+                metadata_reader=get_pdf_metadata,
+                translation_starter=start_job,
+                keyword_starter=start_keyword_job,
+                summary_starter=start_summary_job,
+                upload_root=UPLOAD_DIR,
+            )
+            from services.db import get_db
+            from datetime import datetime, timezone
+            fetched_at = datetime.now(timezone.utc).isoformat()
+            with get_db() as conn:
+                conn.execute(
+                    "UPDATE documents SET source_origin='zotero', source_url=?, canonical_url=?, fetched_at=?, content_unit_count=total_pages WHERE id=?",
+                    (body.url, str(local_pdf), fetched_at, doc_id),
+                )
+                conn.commit()
+            parsed.update(
+                file_size_mb=round(file_size_bytes / 1048576, 2),
+                source_origin="zotero",
+                content_kind="pdf",
+                source_url=body.url,
+                canonical_url=str(local_pdf),
+                fetched_at=fetched_at,
+                total_units=parsed["total_pages"],
+                capabilities=_capabilities("pdf"),
+            )
+            return UploadResponse(**parsed)
+        except HTTPException:
+            shutil.rmtree(session_dir, ignore_errors=True)
+            raise
+        except Exception as exc:
+            shutil.rmtree(session_dir, ignore_errors=True)
+            from services.db import db_delete_document
+            db_delete_document(doc_id)
+            raise HTTPException(status_code=500, detail={"code": "parse_failed", "message": f"Zotero PDF 임포트 실패: {exc}"}) from exc
+
+    if body.url.strip().startswith("zotero://"):
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "zotero_not_found", "message": "Zotero에서 해당 항목의 PDF 파일을 찾을 수 없습니다. Zotero에서 PDF가 정상적으로 열리는지 확인해주세요."}
+        )
+
     try:
         fetched = await asyncio.to_thread(fetch_url, body.url)
     except WebImportError as exc:

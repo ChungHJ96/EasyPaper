@@ -4169,6 +4169,12 @@
   "library:import.failed": {
     "description": "Web import failure status."
   },
+  "library:import.unsupportedDrop": {
+    "description": "Toast message when an unsupported file or link is dropped into the library."
+  },
+  "library:import.zoteroDocument": {
+    "description": "Default display label when importing a document from Zotero."
+  },
   "library:article.openOriginal": {
     "description": "Button opening the original article in a browser."
   },
@@ -4342,6 +4348,9 @@
   },
   "viewer:chapter.cancelFailed": {
     "description": "Chapter/full summary retry and cancellation UI: chapter.cancelFailed"
+  },
+  "viewer:cacheClearedReload": {
+    "description": "Toast shown when single document PDF extraction cache is cleared."
   },
   "chat:memo.createAction": {
     "description": "Button under a quoted-text AI answer that creates a memo in the document."

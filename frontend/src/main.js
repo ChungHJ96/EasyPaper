@@ -1198,14 +1198,54 @@ function resetState() {
 
 // ── 드래그 앤 드롭 ────────────────────────────────
 // libraryScreen에 직접 드래그 앤 드롭 이벤트 바인딩
+function extractDroppedLink(dataTransfer) {
+  if (!dataTransfer) return ''
+  const uriList = dataTransfer.getData('text/uri-list') || ''
+  const text = dataTransfer.getData('text/plain') || ''
+  const html = dataTransfer.getData('text/html') || ''
+
+  let link = ''
+  if (uriList) {
+    link = uriList.split(/[\r\n]+/).map(s => s.trim()).find(s => s && !s.startsWith('#')) || ''
+  }
+  if (!link && text) {
+    link = text.split(/[\r\n]+/)[0].trim()
+  }
+  if (!link && html) {
+    const match = html.match(/href=["']([^"']+)["']/i)
+    if (match) link = match[1].trim()
+  }
+
+  if (link) {
+    const isCandidate = (
+      link.startsWith('zotero://') ||
+      link.startsWith('file://') ||
+      link.startsWith('/') ||
+      /^https?:\/\//i.test(link) ||
+      link.includes('zotero.org')
+    )
+    if (isCandidate) return link
+  }
+  return ''
+}
+
 if (libraryScreen) {
   libraryScreen.addEventListener('dragover', (e) => { e.preventDefault(); libraryScreen.classList.add('drag-over') })
   libraryScreen.addEventListener('dragleave', () => libraryScreen.classList.remove('drag-over'))
-  libraryScreen.addEventListener('drop', (e) => {
+  libraryScreen.addEventListener('drop', async (e) => {
     e.preventDefault(); libraryScreen.classList.remove('drag-over')
+    // 1. 일반 OS 파일 드롭
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       beginClassifiedUpload(e.dataTransfer.files, activeLibraryFolderId)
+      return
     }
+    // 2. Zotero, Zotmoov, 브라우저 링크/URI 드롭
+    const link = extractDroppedLink(e.dataTransfer)
+    if (link) {
+      await beginClassifiedLinkImport(link, activeLibraryFolderId)
+      return
+    }
+    showToast(t('library:import.unsupportedDrop'), 'warning')
   })
 }
 fileInput.addEventListener('change', (e) => {
@@ -1291,6 +1331,79 @@ async function beginClassifiedUpload(files, targetFolderId = null) {
   const selected = await workspaceModeController.chooseUploadClassifications(pdfFiles)
   if (!selected) { fileInput.value = ''; return }
   await handleFiles(selected, targetFolderId)
+}
+
+async function beginClassifiedLinkImport(link, targetFolderId = null) {
+  let displayName = link
+  try {
+    if (link.startsWith('file://')) {
+      displayName = decodeURIComponent(new URL(link).pathname).split('/').pop() || link
+    } else if (link.startsWith('/')) {
+      displayName = link.split('/').pop() || link
+    } else if (link.startsWith('zotero://')) {
+      displayName = t('library:import.zoteroDocument')
+    } else if (/^https?:\/\//i.test(link)) {
+      displayName = new URL(link).hostname
+    }
+  } catch {
+    displayName = link
+  }
+
+  const selected = await workspaceModeController.chooseUploadClassifications([{ name: displayName }])
+  if (!selected?.length) return
+
+  const classification = selected[0].classification
+  uploadPopup.classList.remove('hidden', 'minimized')
+  if (uploadPopupMinimize) uploadPopupMinimize.textContent = '−'
+  uploadPopupBody.replaceChildren()
+  const row = createUploadPopupRow({ name: displayName })
+  uploadPopupBody.appendChild(row.element)
+  uploadPopupTitle.textContent = t('library:import.running')
+
+  try {
+    const remembered = loadDocumentTypeOptions()[classification.documentType] || {}
+    const result = await importURL(link, {
+      ...getTranslationOptions(classification.documentMode),
+      ...remembered,
+      translationMode: getTranslationMode(classification.documentMode),
+      keywordMode: getKeywordMode(classification.documentMode),
+      summaryMode: getSummaryMode(classification.documentMode),
+      documentMode: classification.documentMode,
+      documentType: classification.documentType,
+      classificationMethod: classification.classificationMethod,
+    }, (_pct, phase) => {
+      const labels = { checking: t('library:import.checking'), downloading: t('library:import.downloading'), complete: t('library:import.analyzed') }
+      row.status.textContent = labels[phase] || t('library:import.processing')
+      row.bar.style.width = `${_pct}%`
+    })
+
+    if (classification.classificationMethod === 'ai') {
+      const confirmed = await requireClassificationConfirmation(result.session_id)
+      result.document_mode = confirmed.document_mode
+      result.document_type = confirmed.document_type
+      result.classification_status = 'confirmed'
+    }
+    if (targetFolderId) {
+      try {
+        await moveLibraryDocuments([result.session_id], targetFolderId)
+      } catch {
+        showToast(t('common:legacy.ui.0751'), 'warning')
+      }
+    }
+    row.spinner.classList.add('hidden')
+    row.success.classList.remove('hidden')
+    row.status.textContent = t('library:import.complete')
+    row.bar.style.width = '100%'
+    uploadPopupTitle.textContent = t('library:import.complete')
+    showToast(t('library:import.added'), 'success')
+    if (libraryScreen.classList.contains('active')) await renderLibrary()
+  } catch (err) {
+    row.spinner.classList.add('hidden')
+    row.error.classList.remove('hidden')
+    row.status.textContent = err.message || t('library:import.failed')
+    uploadPopupTitle.textContent = t('library:import.failed')
+    showToast(err.message || t('library:import.failed'), 'error')
+  }
 }
 
 function createUploadPopupRow(file) {
@@ -2420,7 +2533,7 @@ if (viewerClearCacheBtn) {
     if (!ok) return
     try {
       await clearSingleDocCacheAPI(state.sessionId)
-      showToast('PDF 추출 및 번역 캐시가 삭제되었습니다. 뷰어를 새로고침합니다.', 'success')
+      showToast(t('viewer:cacheClearedReload'), 'success')
       setTimeout(() => window.location.reload(), 500)
     } catch (err) {
       showToast('캐시 삭제 실패: ' + err.message, 'error')
@@ -6826,7 +6939,15 @@ function setFolderDropTarget(el, folderId) {
     try {
       const raw = e.dataTransfer.getData('application/x-easypaper-item')
       if (!raw) {
-        if (e.dataTransfer.files?.length) handleFiles(e.dataTransfer.files, folderId)
+        if (e.dataTransfer.files?.length) {
+          beginClassifiedUpload(e.dataTransfer.files, folderId)
+          return
+        }
+        const link = extractDroppedLink(e.dataTransfer)
+        if (link) {
+          await beginClassifiedLinkImport(link, folderId)
+          return
+        }
         return
       }
       const item = JSON.parse(raw)
@@ -17620,8 +17741,8 @@ if (viewerScrollContainer) {
               };
 
               if (!isNaN(curPage) && targetPage > curPage) {
-                // 다음 페이지로 이동: 첫 번째 본문 문장 (또는 [Np 연결]이 달린 문장)
-                targetSent = sents.find(el => el.textContent.includes('연결]') || !isNonBody(el)) || sents[0];
+                // 다음 페이지로 이동: 첫 번째 본문 문장 (또는 페이지 연결 뱃지가 달린 문장)
+                targetSent = sents.find(el => el.querySelector?.('.trans-page-link-badge') || !isNonBody(el)) || sents[0];
               } else {
                 // 이전 페이지로 이동: 표나 그림 캡션이 아닌 마지막 실제 본문 문장 역순 탐색
                 for (let i = sents.length - 1; i >= 0; i--) {

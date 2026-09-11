@@ -50,6 +50,8 @@
   "import.complete": "Import complete",
   "import.added": "Web document added to the library ✓",
   "import.failed": "Import failed",
+  "import.unsupportedDrop": "Unsupported file or link format.",
+  "import.zoteroDocument": "Zotero document",
   "article.openOriginal": "Open original in browser",
   "article.translationPending": "Translation pending…",
   "article.snapshot": "Saved snapshot",

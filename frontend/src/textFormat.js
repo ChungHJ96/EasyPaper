@@ -149,7 +149,7 @@ export function formatTranslationHtml(text) {
 
   // 6.5. 페이지 연결 뱃지: [4p 연결]
   html = html.replace(/\[(\d+)p\s*연결\]/g, (match, pageNum) => {
-    return `<span class="trans-page-link-badge" data-page-link="${pageNum}" title="${pageNum}페이지에서 이어진 문장입니다. 클릭하여 ${pageNum}페이지로 이동">${match}</span>`
+    return `<span class="trans-page-link-badge" data-page-link="${pageNum}">${match}</span>`
   })
 
   // 7. 수식 플레이스홀더 복원

@@ -1126,6 +1126,33 @@ body:not(.light-theme) .pdf-page-inner canvas {
   text-indent: 1.5em;
 }
 
+/* 앞 페이지에서 이어진 문장임을 표시하는 은은한 인라인 뱃지 */
+.trans-page-link-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--control-accent-text, #93c5fd);
+  background: var(--control-accent-soft, rgba(37, 99, 235, 0.16));
+  border: 1px solid var(--border-glow, rgba(37, 99, 235, 0.3));
+  border-radius: var(--radius-sm, 5px);
+  padding: 1px 6px;
+  margin-right: 6px;
+  vertical-align: 1px;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.15s ease;
+}
+
+.trans-page-link-badge:hover {
+  background: var(--accent-glow, rgba(37, 99, 235, 0.28));
+  border-color: var(--accent-mid, #2563eb);
+  color: #bfdbfe;
+  transform: translateY(-1px);
+}
+
 .trans-error {
   font-size: 13.5px;
   color: var(--error);

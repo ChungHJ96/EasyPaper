@@ -143,6 +143,11 @@ export function formatTranslationHtml(text) {
   // 6. 볼드: **...**
   html = html.replace(/\*\*([^*]+?)\*\*/g, '<strong>$1</strong>')
 
+  // 6.5. 페이지 연결 뱃지: [4p 연결]
+  html = html.replace(/\[(\d+)p\s*연결\]/g, (match, pageNum) => {
+    return `<span class="trans-page-link-badge" data-page-link="${pageNum}" title="${pageNum}페이지에서 이어진 문장입니다. 클릭하여 ${pageNum}페이지로 이동">${match}</span>`
+  })
+
   // 7. 수식 플레이스홀더 복원
   html = html.replace(/::MATH_FLT_PLACEHOLDER_(\d+)::/g, (_, idStr) => {
     const item = mathBlocks[parseInt(idStr)]

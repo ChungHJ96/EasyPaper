@@ -17522,6 +17522,27 @@ if (viewerScrollContainer) {
       const selection = window.getSelection();
       if (selection && !selection.isCollapsed) return;
 
+      // ── 페이지 연결 뱃지 클릭 시 이전 페이지로 이동 ──
+      const pageBadge = e.target.closest('.trans-page-link-badge');
+      if (pageBadge && pageBadge.dataset.pageLink) {
+        e.preventDefault();
+        e.stopPropagation();
+        const targetPage = parseInt(pageBadge.dataset.pageLink, 10);
+        if (!isNaN(targetPage) && targetPage >= 1) {
+          const target = viewerScrollContainer.querySelector(`.page-pair[data-page="${targetPage}"]`) || viewerScrollContainer.querySelector(`.pdf-page-wrapper[data-page="${targetPage}"]`) || viewerScrollContainer.querySelector(`[data-page="${targetPage}"]`);
+          if (target) {
+            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+          const sents = viewerScrollContainer.querySelectorAll(`.trans-sentence[data-page="${targetPage}"]`);
+          if (sents.length > 0) {
+            const last = sents[sents.length - 1];
+            last.classList.add('active');
+            setTimeout(() => last.classList.remove('active'), 2500);
+          }
+          return;
+        }
+      }
+
       // ── trans-sentence 클릭 ──
       const transSent = e.target.closest('.trans-sentence');
       if (transSent) {

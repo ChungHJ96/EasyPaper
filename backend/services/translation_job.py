@@ -8,12 +8,13 @@
 import asyncio
 import json
 import os
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
 from config import LIBRARY_DIR, get_trans_provider
 from services.atomic_io import atomic_write_text
-from services.chunker import split_into_chunks, align_sentences, tag_source_text, parse_tagged_translation
+from services.chunker import split_into_chunks, align_sentences, tag_source_text, parse_tagged_translation, get_cross_page_continuation
 from services.llm_client import stream_translation
 from services.library import save_translation, get_translation, get_translation_full, get_document, get_pdf_path
 from services.pdf_parser import render_page_image_base64
@@ -328,9 +329,20 @@ async def _run_job(session_id: str, pages: list, job: dict) -> None:
                 except Exception as e:
                     print(f"[Job {session_id}] page {page_num} 이미지 렌더링 실패(텍스트만 사용): {e}")
 
+            total_pages = len(pages)
+            prev_page_data = next((p for p in pages if p["page_num"] == page_num - 1), None) if page_num > 1 else None
+            next_page_data = next((p for p in pages if p["page_num"] == page_num + 1), None) if page_num < total_pages else None
+
+            tail_cont = get_cross_page_continuation(page_data, next_page_data) if next_page_data else None
+            head_cont = get_cross_page_continuation(prev_page_data, page_data) if prev_page_data else None
+
             try:
-                # 원문 태깅 처리
-                tagged_text, src_sentences = tag_source_text(text)
+                # 원문 태깅 처리 (페이지 경계 문장 결합)
+                tagged_text, src_sentences = tag_source_text(
+                    text,
+                    tail_cont=tail_cont,
+                    head_cont=head_cont,
+                )
 
                 from services.document_tasks import retry_async, update_page, update_task
                 task_id = job.get("task_id")
@@ -372,6 +384,50 @@ async def _run_job(session_id: str, pages: list, job: dict) -> None:
                 job["next_retry_at"] = None
                 # 태그 분석 및 매핑 생성
                 cleaned_translation, sentences = parse_tagged_translation(translation, src_sentences)
+
+                # Option 1: 이전 페이지에서 이어진 문장(head_cont)이 있는 경우 첫 문장에 [${prev_page_num}p 연결] 뱃지 부착
+                if head_cont and sentences:
+                    badge = f"[{head_cont['prev_page_num']}p 연결] "
+                    badge_prefix = f"[{head_cont['prev_page_num']}p 연결]"
+                    if not sentences[0]["trans"].startswith(badge_prefix):
+                        sentences[0]["trans"] = badge + sentences[0]["trans"].strip()
+                    if not cleaned_translation.startswith(badge_prefix):
+                        cleaned_translation = badge + cleaned_translation.strip()
+
+                # 이전 페이지가 이미 번역되어 있는 경우, 동일 문장 일치성 동기화
+                if head_cont and sentences and page_num > 1:
+                    prev_cached_full = {}
+                    for cand in suffix_candidates:
+                        prev_cached_full = get_translation_full(session_id, page_num - 1, cand, fallback=False)
+                        if prev_cached_full.get("sentences"):
+                            break
+                    if prev_cached_full.get("sentences"):
+                        matched_prev = next((s for s in reversed(prev_cached_full["sentences"]) if s.get("src") == head_cont["tail_fragment"]), None)
+                        if matched_prev and matched_prev.get("trans"):
+                            badge = f"[{head_cont['prev_page_num']}p 연결] "
+                            synchronized_trans = badge + matched_prev["trans"].strip()
+                            old_first_trans = sentences[0]["trans"]
+                            sentences[0]["trans"] = synchronized_trans
+                            cleaned_translation = cleaned_translation.replace(old_first_trans, synchronized_trans, 1)
+
+                # 다음 페이지가 이미 번역되어 있는 경우, 동일 문장 일치성 동기화
+                if tail_cont and sentences and page_num < total_pages:
+                    next_cached_full = {}
+                    for cand in suffix_candidates:
+                        next_cached_full = get_translation_full(session_id, page_num + 1, cand, fallback=False)
+                        if next_cached_full.get("sentences"):
+                            break
+                    if next_cached_full.get("sentences"):
+                        matched_next = next((s for s in next_cached_full["sentences"] if s.get("src") == tail_cont["head_fragment"]), None)
+                        if matched_next and matched_next.get("trans"):
+                            clean_synced = re.sub(r'^\[\d+p\s*연결\]\s*', '', matched_next["trans"]).strip()
+                            if clean_synced:
+                                matched_curr = next((s for s in reversed(sentences) if s.get("src") == tail_cont["tail_fragment"]), None)
+                                if matched_curr:
+                                    old_tail_trans = matched_curr["trans"]
+                                    matched_curr["trans"] = clean_synced
+                                    cleaned_translation = cleaned_translation.replace(old_tail_trans, clean_synced, 1)
+
                 if document_mode == "general":
                     from services.translation_quality import assert_translation_integrity
                     assert_translation_integrity(text, cleaned_translation)

@@ -1,5 +1,5 @@
 import re
-from typing import List
+from typing import List, Optional, Dict, Any, Tuple
 
 from services.pdf_parser import _INDENT_SENTINEL
 
@@ -214,18 +214,121 @@ def align_sentences(src_text: str, tgt_text: str) -> List[dict]:
         return align_paragraph(s_sents, t_sents)
 
 
-def tag_source_text(text: str) -> tuple[str, List[str]]:
+def is_running_header_footer(block: dict) -> bool:
+    """블록이 상단/하단 러닝 헤더나 푸터, 또는 저널 메타데이터인지 판별합니다."""
+    bbox = block.get("bbox", [0.0, 0.0, 1000.0, 1000.0])
+    # 상단 8% (80pt) 또는 하단 12% (880pt) 이내 여백 영역
+    if bbox[1] < 80.0 or bbox[3] > 880.0:
+        return True
+    text = block.get("text", "").strip()
+    if not text:
+        return True
+    # 저널/출판 메타데이터 텍스트 패턴
+    if re.search(r'\b(?:Volume\s*\d+|Article\s*[a-z]?\d+|doi:|http[s]?://|www\.)', text, re.IGNORECASE):
+        return True
+    if re.search(r'\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b', text, re.IGNORECASE):
+        return True
+    if text.startswith("<sub>") and text.endswith("</sub>"):
+        return True
+    return False
+
+
+def get_page_body_blocks(page: dict) -> List[dict]:
+    """페이지의 블록 중 본문 텍스트 블록(type==0 이며 헤더/푸터가 아닌 블록)을 반환합니다."""
+    blocks = page.get("blocks", [])
+    body_blocks = []
+    for b in blocks:
+        if b.get("type") != 0:
+            continue
+        if not b.get("text", "").strip():
+            continue
+        if is_running_header_footer(b):
+            continue
+        body_blocks.append(b)
+    return body_blocks
+
+
+def get_cross_page_continuation(prev_page: Optional[dict], next_page: Optional[dict]) -> Optional[dict]:
+    """
+    이전 페이지와 다음 페이지 사이에 걸쳐 있는 미완성 문장이 있는지 감지하고,
+    있다면 두 페이지의 조각과 완성된 결합 문장 정보를 반환합니다.
+    """
+    if not prev_page or not next_page:
+        return None
+
+    prev_blocks = get_page_body_blocks(prev_page)
+    prev_txt = prev_blocks[-1]["text"].strip() if prev_blocks else prev_page.get("text", "").strip()
+    next_blocks = get_page_body_blocks(next_page)
+    next_txt = next_blocks[0]["text"].strip() if next_blocks else next_page.get("text", "").strip()
+
+    if not prev_txt or not next_txt:
+        return None
+
+    prev_sents = split_into_sentences(prev_txt)
+    next_sents = split_into_sentences(next_txt)
+
+    if not prev_sents or not next_sents:
+        return None
+
+    tail_sent = prev_sents[-1].strip()
+    head_sent = next_sents[0].strip()
+
+    # 1. 이전 페이지 마지막 문장이 온전한 종결 부호(.!?)로 끝나면 연결이 아님
+    has_terminal = bool(re.search(r'[.!?][)\]"\']*$', tail_sent))
+    if has_terminal:
+        return None
+
+    # 2. 다음 페이지 첫머리가 섹션 제목이나 표/그림 라벨이면 문장 연결이 아님
+    if re.match(r'^(?:TABLE|FIGURE|FIG\.|TAB\.|Section|\d+\.)', head_sent, re.IGNORECASE) or re.match(r'^[A-Z0-9\s:\-—]{4,}$', head_sent):
+        return None
+
+    # 3. 연결 조건:
+    #   - tail_sent가 하이픈('-')으로 끝남 (단어 분리)
+    #   - 또는 head_sent가 소문자로 시작함
+    #   - 또는 tail_sent가 연결어(and, or, of, the, a, for, in, to, with, 숫자 등)나 쉼표(,)로 끝남
+    is_hyphen = tail_sent.endswith('-')
+    starts_lower = bool(re.match(r'^[a-z]', head_sent))
+    ends_connective = bool(re.search(r'(?:,|;|\b(?:and|or|of|the|a|an|for|in|on|at|to|with|by|from|as|that|which|who|whom|whose|\d+))\s*$', tail_sent, re.IGNORECASE))
+
+    if not (is_hyphen or starts_lower or ends_connective):
+        return None
+
+    stitched_sent = (tail_sent[:-1] + head_sent) if is_hyphen else f"{tail_sent} {head_sent}"
+
+    return {
+        "prev_page_num": prev_page.get("page_num"),
+        "next_page_num": next_page.get("page_num"),
+        "tail_fragment": tail_sent,
+        "head_fragment": head_sent,
+        "stitched_sentence": stitched_sent,
+    }
+
+
+def tag_source_text(
+    text: str,
+    tail_cont: Optional[dict] = None,
+    head_cont: Optional[dict] = None,
+) -> tuple[str, List[str]]:
     """
     텍스트의 각 문장 시작 부분에 [S0], [S1], ... 문장 식별자 태그를 삽입합니다.
-    원문 문단이 PDF에서 첫 줄 들여쓰기가 적용된 문단이었다면(pdf_parser가 문단
-    맨 앞에 붙여둔 표시로 판별), 그 문단 첫 문장의 태그에 ":I" 접미사를 붙여
-    번역 결과에서도 이 태그 하나만 잘 보존되면 들여쓰기 여부를 복원할 수 있게 한다.
+    페이지 경계에 걸친 문장이 있는 경우:
+    - tail_cont: 현재 페이지 마지막 문장이 다음 페이지로 이어지면 결합된 전체 문장으로 치환하여 태깅
+    - head_cont: 이전 페이지에서 이어진 문장으로 시작하면 결합된 전체 문장으로 치환하여 태깅
+    원문 텍스트 레이어와의 1대1 매핑을 위해 src_sentences에는 실제 페이지 내 조각(tail/head)을 보존합니다.
     """
     if not text.strip():
         return "", []
     paras = [p.strip() for p in text.split("\n\n") if p.strip()]
     tagged_paras = []
     src_sentences = []
+
+    tail_frag = tail_cont.get("tail_fragment") if tail_cont else None
+    head_frag = head_cont.get("head_fragment") if head_cont else None
+
+    tail_replaced = False
+    head_replaced = False
+
+    all_sents_count = sum(len(split_into_sentences(p)) for p in paras)
 
     idx = 0
     for para in paras:
@@ -235,9 +338,21 @@ def tag_source_text(text: str) -> tuple[str, List[str]]:
         sents = split_into_sentences(para)
         tagged_sents = []
         for i, s in enumerate(sents):
-            src_sentences.append(s)
             suffix = ":I" if (is_indented and i == 0) else ""
-            tagged_sents.append(f"[S{idx}{suffix}] {s}")
+
+            # head_frag 매칭: 페이지 첫머리에서 이전 페이지로부터 이어진 문장 (첫 3문장 이내)
+            if head_frag and not head_replaced and idx <= 3 and (idx == 0 or s == head_frag or head_frag.startswith(s[:20]) or s.startswith(head_frag[:20])):
+                src_sentences.append(head_frag)
+                tagged_sents.append(f"[S{idx}{suffix}] {head_cont['stitched_sentence']}")
+                head_replaced = True
+            # tail_frag 매칭: 페이지 끝단에서 다음 페이지로 이어지는 문장 (뒤쪽 문장에서만 매칭)
+            elif tail_frag and not tail_replaced and idx >= max(0, all_sents_count - 15) and (s == tail_frag or s.endswith(tail_frag[-20:]) or tail_frag in s or tail_frag.endswith(s[-20:])):
+                src_sentences.append(tail_frag)
+                tagged_sents.append(f"[S{idx}{suffix}] {tail_cont['stitched_sentence']}")
+                tail_replaced = True
+            else:
+                src_sentences.append(s)
+                tagged_sents.append(f"[S{idx}{suffix}] {s}")
             idx += 1
         tagged_paras.append(" ".join(tagged_sents))
 

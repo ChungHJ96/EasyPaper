@@ -14637,9 +14637,16 @@ function attachEvidenceToBubble(bubble, evidenceItems = []) {
     if (!byPage.has(page)) byPage.set(page, [])
     byPage.get(page).push(item)
   })
+  const byId = new Map(evidenceItems.map(item => [item.evidence_id, item]))
   bubble.querySelectorAll("[data-page-citation]").forEach(button => {
     const page = Number(button.dataset.pageCitation)
-    const item = byPage.get(page)?.shift()
+    let item = button.dataset.evidenceId ? byId.get(button.dataset.evidenceId) : null
+    if (!item) {
+      const pageList = byPage.get(page)
+      if (pageList && pageList.length > 0) {
+        item = pageList.length > 1 ? pageList.shift() : pageList[0]
+      }
+    }
     if (!item) return
     button.dataset.evidenceId = item.evidence_id
     button.dataset.evidenceQuote = item.quote || ""
@@ -16609,37 +16616,73 @@ async function locateTermInPdf(pageNum, term, occurrence = 1) {
     if (cleanIdx === -1) break
     searchFrom = cleanIdx + cleanTerm.length
   }
+  let matchedLength = cleanTerm.length
+  // 긴 문단 인용 시 띄어쓰기/개행 차이로 인한 매칭 실패를 방지하기 위해 앞부분 탐색 폴백
+  if (cleanIdx === -1 && cleanTerm.length > 50) {
+    const probe = cleanTerm.slice(0, 60)
+    cleanIdx = cleanText.indexOf(probe)
+    if (cleanIdx !== -1) matchedLength = 60
+  }
+  if (cleanIdx === -1 && cleanTerm.length > 30) {
+    const probe = cleanTerm.slice(0, 30)
+    cleanIdx = cleanText.indexOf(probe)
+    if (cleanIdx !== -1) matchedLength = 30
+  }
+
   if (cleanIdx === -1) {
-    showToast('원문에서 해당 단어를 찾지 못했습니다.', 'warning')
+    pw.scrollIntoView({ behavior: 'smooth', block: 'center' })
     return
   }
 
   const rawStart = cleanToRaw[cleanIdx]
-  const rawEnd = cleanToRaw[cleanIdx + cleanTerm.length - 1] + 1
+  const rawEnd = cleanToRaw[cleanIdx + matchedLength - 1] + 1
 
   const textLayer = pw.querySelector('.textLayer')
   if (!textLayer) {
-    showToast('원문 위치를 찾을 수 없습니다.', 'warning')
+    pw.scrollIntoView({ behavior: 'smooth', block: 'center' })
     return
   }
   const rects = getSentenceRects({ charStart: rawStart, charEnd: rawEnd }, vtm, textLayer)
   if (rects.length === 0) {
-    showToast('원문 위치를 하이라이트하지 못했습니다.', 'warning')
+    pw.scrollIntoView({ behavior: 'smooth', block: 'center' })
     return
   }
 
-  // 스크롤이 실제로 필요한 경우, 부드러운 스크롤 애니메이션이 끝나기 전에 하이라이트가
-  // 먼저 그려져서 화면 밖에 있는 동안 다 사라져버리는 문제(그래서 두 번 클릭해야 겨우
-  // 보이는 것처럼 느껴짐)를 막기 위해, 스크롤이 실제로 자리를 잡을 때까지 기다린 뒤에
-  // 하이라이트를 그린다. 이미 화면에 보이는 위치라면(스크롤이 사실상 필요 없다면) 바로 그린다.
-  const alreadyInView = isElementReasonablyInView(pw, viewerScrollContainer)
-  pw.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  if (!alreadyInView) {
-    await waitForScrollSettle(viewerScrollContainer)
-  }
+  // 페이지 전체가 아닌, 해당 문장의 실제 위치를 뷰포트 정중앙으로 정밀 스크롤
+  const pwRect = pw.getBoundingClientRect()
+  const containerRect = viewerScrollContainer.getBoundingClientRect()
+  const firstRect = rects[0]
+  const targetScrollTop = viewerScrollContainer.scrollTop + pwRect.top - containerRect.top + firstRect.top - (containerRect.height / 2) + (firstRect.height / 2)
+  viewerScrollContainer.scrollTo({ top: Math.max(0, targetScrollTop), behavior: 'smooth' })
+
+  await waitForScrollSettle(viewerScrollContainer)
+
   const overlay = getOrCreateOverlay(pw)
   renderSentenceOverlay(overlay, rects, 'sentence-locate-pulse-box')
-  setTimeout(() => clearOverlayBoxes(overlay, 'sentence-locate-pulse-box'), 1800)
+  setTimeout(() => clearOverlayBoxes(overlay, 'sentence-locate-pulse-box'), 2500)
+
+  // 동반되는 번역 패널의 해당 문장도 함께 능동 하이라이트 및 펄스 처리
+  const sentenceRanges = state.pdfPageSentences && state.pdfPageSentences[pageNum]
+  if (sentenceRanges) {
+    const matched = sentenceRanges.find(r =>
+      (rawStart >= r.charStart && rawStart < r.charEnd) ||
+      (rawEnd > r.charStart && rawEnd <= r.charEnd) ||
+      (r.charStart >= rawStart && r.charEnd <= rawEnd)
+    )
+    if (matched) {
+      applyActiveHighlight(pageNum, matched)
+      const transIdx = matched.sentenceIdx >= 10000 ? (matched.originalSentenceIdx ?? -1) : matched.sentenceIdx
+      if (transIdx >= 0) {
+        const transMatches = viewerScrollContainer.querySelectorAll(
+          `.trans-sentence[data-page="${pageNum}"][data-sentence-idx="${transIdx}"]`
+        )
+        transMatches.forEach(el => {
+          el.classList.add('sentence-pulse')
+          setTimeout(() => el.classList.remove('sentence-pulse'), 2500)
+        })
+      }
+    }
+  }
 }
 
 // 메인 진입점: buildVirtualTextMap → alignSentencesToText → state 저장 → 메모 오버레이 렌더링

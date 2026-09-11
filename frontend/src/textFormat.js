@@ -24,11 +24,14 @@ export function linkPageCitations(html, totalPages) {
     if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end < start || end > maximum) return match
     return `<button type="button" class="chat-page-citation" data-page-citation="${start}" data-page-citation-end="${end}" title="${start}–${end}페이지로 이동">[pp.${start}-${end}]</button>`
   })
-  return rangeLinked.replace(/\[p\.(\d+)\]/gi, (match, pageText) => {
+  // Match both standard [p.8] and unparsed [p.8, E:ev_...] or [p.8, ev_...]
+  const singleLinked = rangeLinked.replace(/\[p\.(\d+)(?:[,\s]*(?:E:\s*)?ev_[A-Za-z0-9_-]+)?\]/gi, (match, pageText) => {
     const page = Number(pageText)
     if (!Number.isInteger(page) || page < 1 || page > maximum) return match
     return `<button type="button" class="chat-page-citation" data-page-citation="${page}" title="${page}페이지로 이동">[p.${page}]</button>`
   })
+  // Clean up any remaining unparsed standalone [E:ev_...] tags
+  return singleLinked.replace(/\[(?:E:\s*)?ev_[A-Za-z0-9_-]+\]/gi, '')
 }
 
 /** Markdown과 LaTeX를 안전하게 렌더링한다. */

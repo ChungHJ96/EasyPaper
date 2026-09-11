@@ -398,7 +398,8 @@ def validate_page_citations(answer: str, evidence_pages: set[int] | frozenset[in
     return _CITATION_RE.sub(replace, answer or ""), invalid
 
 
-_EVIDENCE_CITATION_RE = re.compile(r"\[E:([A-Za-z0-9_-]+)\]")
+_EVIDENCE_BRACKET_RE = re.compile(r"\[([^\]]*?(?:E:|ev_)[^\]]*?)\]", re.IGNORECASE)
+_EID_EXTRACT_RE = re.compile(r"(?:E:|evidence:)\s*([A-Za-z0-9_-]+)|(ev_[A-Za-z0-9_-]+)", re.IGNORECASE)
 _NUMBER_RE = re.compile(r"(?<![A-Za-z])\d+(?:[.,]\d+)?%?")
 
 
@@ -408,22 +409,45 @@ def validate_evidence_citations(answer: str, evidence: tuple[dict, ...] | list[d
     cited_ids = []
     invalid_ids = []
 
-    def replace(match: re.Match) -> str:
-        evidence_id = match.group(1)
-        item = by_id.get(evidence_id)
-        if item is None:
-            invalid_ids.append(evidence_id)
-            return "[제공되지 않은 근거 ID 제거]"
-        cited_ids.append(evidence_id)
-        page_num = item["page_num"]
-        return f"[p.{page_num}]"
+    def replace_bracket(match: re.Match) -> str:
+        inner = match.group(1)
+        found_eids = []
+        for m in _EID_EXTRACT_RE.finditer(inner):
+            eid = m.group(1) or m.group(2)
+            if eid and eid.lower() != "ev_" and eid not in found_eids:
+                found_eids.append(eid)
+        if not found_eids:
+            return match.group(0)
 
-    displayed = _EVIDENCE_CITATION_RE.sub(replace, answer or "")
+        pages = []
+        has_invalid = False
+        for eid in found_eids:
+            item = by_id.get(eid)
+            if item is None:
+                invalid_ids.append(eid)
+                has_invalid = True
+            else:
+                cited_ids.append(eid)
+                pages.append(item["page_num"])
+
+        if has_invalid:
+            return "[제공되지 않은 근거 ID 제거]"
+
+        seen_pages = []
+        for p in pages:
+            if p not in seen_pages:
+                seen_pages.append(p)
+        return ", ".join(f"[p.{p}]" for p in seen_pages)
+
+    displayed = _EVIDENCE_BRACKET_RE.sub(replace_bracket, answer or "")
+    # Clean up accidental duplicate page citations like [p.8][p.8] or [p.8], [p.8]
+    displayed = re.sub(r"(\[p\.\d+\])(?:[,\s]*\1)+", r"\1", displayed)
+
     cited = [by_id[evidence_id] for evidence_id in dict.fromkeys(cited_ids)]
     sentences = [part.strip() for part in re.split(r"(?<=[.!?。！？])\s+|\n+", answer or "") if part.strip()]
     numeric_without_citation = [
         sentence[:240] for sentence in sentences
-        if _NUMBER_RE.search(sentence) and not _EVIDENCE_CITATION_RE.search(sentence)
+        if _NUMBER_RE.search(sentence) and not (_EVIDENCE_BRACKET_RE.search(sentence) or re.search(r"\[p\.\d+\]", sentence))
     ]
     claim_count = sum(1 for sentence in sentences if len(sentence) >= 24)
     insufficient = claim_count >= 3 and len(set(cited_ids)) * 2 < claim_count
@@ -443,3 +467,4 @@ def validate_evidence_citations(answer: str, evidence: tuple[dict, ...] | list[d
         "citation_count": len(set(cited_ids)),
     }
     return displayed, cited, verification
+

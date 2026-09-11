@@ -265,6 +265,7 @@ async def chat_stream(data: ChatRequest, current_user: str = Depends(get_current
     system_prompt += (
         "\n\n[EVIDENCE CITATION RULES]\n"
         "Every factual claim based on the document must cite one or more supplied evidence IDs exactly as [E:ev_...]. "
+        "Write ONLY the evidence ID inside brackets (e.g. [E:ev_...], never [p.8, E:ev_...]), as the application will automatically convert it into an interactive page link for the user. "
         "Never invent an evidence ID. Numeric claims always require a citation. If evidence is insufficient, say so."
     )
     history_messages = [{"role": msg.role, "content": msg.content} for msg in data.messages]

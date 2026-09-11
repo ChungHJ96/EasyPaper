@@ -64,6 +64,7 @@ export async function loadPDF(url) {
   renderGeneration++
   pdfDoc = nextPdfDoc
   figureCropCache.clear()
+  pageTextCache.clear()
   return pdfDoc.numPages
 }
 
@@ -394,5 +395,25 @@ export async function getPDFOutline() {
   } catch (err) {
     console.error("Error loading PDF outline:", err)
     return null
+  }
+}
+
+const pageTextCache = new Map()
+
+export function clearPageTextCache() {
+  pageTextCache.clear()
+}
+
+export async function getPDFPageText(pageNum) {
+  if (pageTextCache.has(pageNum)) return pageTextCache.get(pageNum)
+  if (!pdfDoc || pageNum < 1 || pageNum > pdfDoc.numPages) return ''
+  try {
+    const page = await pdfDoc.getPage(pageNum)
+    const tc = await page.getTextContent()
+    const text = tc.items.map(it => it.str).join(' ')
+    pageTextCache.set(pageNum, text)
+    return text
+  } catch (e) {
+    return ''
   }
 }

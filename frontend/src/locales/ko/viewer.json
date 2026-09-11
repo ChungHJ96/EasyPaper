@@ -79,5 +79,14 @@
   "chapter.cancel": "전체 요약 취소",
   "chapter.cancelled": "전체 요약 작업을 취소했습니다.",
   "chapter.cancelFailed": "전체 요약 취소에 실패했습니다.",
-  "cacheClearedReload": "PDF 추출 및 번역 캐시가 삭제되었습니다. 뷰어를 새로고침합니다."
+  "cacheClearedReload": "PDF 추출 및 번역 캐시가 삭제되었습니다. 뷰어를 새로고침합니다.",
+  "search.btnTitle": "문서 내 검색 (Cmd+F / Ctrl+F)",
+  "search.placeholder": "원문 또는 번역 검색...",
+  "search.all": "전체",
+  "search.pdf": "원문",
+  "search.trans": "번역",
+  "search.prev": "이전 (Shift+Enter)",
+  "search.next": "다음 (Enter)",
+  "search.close": "닫기 (Esc)",
+  "search.noResults": "결과 없음"
 }

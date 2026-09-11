@@ -4352,6 +4352,33 @@
   "viewer:cacheClearedReload": {
     "description": "Toast shown when single document PDF extraction cache is cleared."
   },
+  "viewer:search.btnTitle": {
+    "description": "Tooltip for the in-document search button in the viewer topbar."
+  },
+  "viewer:search.placeholder": {
+    "description": "Placeholder text for the viewer find input."
+  },
+  "viewer:search.all": {
+    "description": "Scope button label to search both original PDF and translation."
+  },
+  "viewer:search.pdf": {
+    "description": "Scope button label to search only original PDF."
+  },
+  "viewer:search.trans": {
+    "description": "Scope button label to search only translation."
+  },
+  "viewer:search.prev": {
+    "description": "Tooltip for finding previous match."
+  },
+  "viewer:search.next": {
+    "description": "Tooltip for finding next match."
+  },
+  "viewer:search.close": {
+    "description": "Tooltip for closing the find bar."
+  },
+  "viewer:search.noResults": {
+    "description": "Text displayed when no matches are found in search."
+  },
   "chat:memo.createAction": {
     "description": "Button under a quoted-text AI answer that creates a memo in the document."
   },

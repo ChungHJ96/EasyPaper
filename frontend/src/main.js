@@ -13,7 +13,7 @@ import { defaultDocumentType, loadDocumentTypeOptions, saveDocumentTypeOptions, 
 import DOMPurify from 'dompurify'
 import { mountArticleViewer } from './articleViewer.js'
 import { uploadPDF, importURL, getArticleAPI, checkHealth, streamTranslation, getJobStatus, getPageTranslation, loginAPI, logoutAPI, checkAuthAPI, changeCredentialsAPI, getSkipLoginAPI, setSkipLoginAPI, getSystemSettingsAPI, saveSystemSettingsAPI, restartJobAPI, streamPullModelAPI, deleteModelAPI, streamChatAPI, clearTranslationCacheAPI, clearPagesCacheAPI, clearSingleDocCacheAPI, getChatHistoryAPI, cancelJobAPI, triggerSystemUpdateAPI, checkForUpdateAPI, streamPageInsightAPI, getOllamaStatusAPI, streamInstallOllamaAPI, fetchCliAvailability, getUpdateCheckConfigAPI, setUpdateCheckConfigAPI, getPostUpdateNoticeAPI, streamCompareChatAPI, getCompareChatHistoryAPI, getFullChangelogAPI, getChatSessionsAPI, getCompareChatSessionsAPI, getSuggestedQuestionsAPI, fetchPdfParsersInfoAPI, installPdfParserAPI, uninstallPdfParserAPI, fetchDocumentTypesAPI, getWorkspaceSettingsAPI, patchWorkspaceSettingsAPI, patchDocumentClassificationAPI, getDocumentClassificationAPI, confirmDocumentClassificationAPI, estimateInsightJobAPI, startInsightJobAPI, getInsightJobStatusAPI, cancelInsightJobAPI, getLanguagesAPI, getLanguageSettingsAPI, saveLanguageSettingsAPI, patchDocumentLanguagesAPI, patchDocumentProcessingPolicyAPI, retryDocumentTaskAPI, cancelDocumentTaskAPI, createReparsePreviewAPI, getReparsePreviewAPI, applyReparsePreviewAPI, getDocumentChaptersAPI, getChapterSummaryAPI, getFullSummaryEstimateAPI, startFullSummaryAPI, getFullSummaryStatusAPI } from './api.js'
-import { refreshTextLayerGeometry, loadPDF, renderScrollView, scrollToPage, reRenderAll, getScale, getTotalPages, getPDFOutline, renderFigureCrop } from './pdfViewer.js'
+import { refreshTextLayerGeometry, loadPDF, renderScrollView, scrollToPage, reRenderAll, getScale, getTotalPages, getPDFOutline, renderFigureCrop, getPDFPageText, clearPageTextCache } from './pdfViewer.js'
 import { fetchLibrary, fetchLibraryDoc, fetchLibraryFolders, createLibraryFolder, updateLibraryFolder, deleteLibraryFolder, moveLibraryDocuments, deleteLibraryDoc, fetchLibraryTranslation, fetchLibraryDocImages, updateLibraryDocMetadata, updateLibraryDocTitle, updateLibraryTranslation, fetchLibraryTrash, restoreLibraryDoc, emptyLibraryTrash, deleteLibraryDocPermanently, searchLibrary, exportAnnotatedPdf, fetchLibraryReferences, resolveLibraryReference, fetchPrimer, regeneratePrimer, fetchLibraryBibliography, fetchLibraryGraph, fetchGraphNodeQuestions, searchGraphNodes, fetchReadingRecommendations, fetchCachedReadingRecommendations, fetchLibraryHeatmapMatrix, sendReadingHeartbeat, fetchPaperTagOntology, updatePaperTags, reclassifyPaperTags } from './library.js'
 import { ensureLocalResourceIds, hasPendingAnnotationSync, recordLocalResourceChange, syncDocumentAnnotations } from './annotationSync.js'
 import { icon } from './icons.js'
@@ -884,6 +884,14 @@ const outlineSidebar     = $('outline-sidebar')
 const outlineCloseBtn    = $('outline-close-btn')
 const outlineContent     = $('outline-content')
 const viewerPrimerBtn    = $('viewer-primer-btn')
+const viewerSearchBtn    = $('viewer-search-btn')
+const viewerFindBar      = $('viewer-find-bar')
+const viewerFindInput    = $('viewer-find-input')
+const viewerFindCount    = $('viewer-find-count')
+const viewerFindScope    = $('viewer-find-scope')
+const viewerFindPrevBtn  = $('viewer-find-prev-btn')
+const viewerFindNextBtn  = $('viewer-find-next-btn')
+const viewerFindCloseBtn = $('viewer-find-close-btn')
 
 // 읽기 전 브리핑(Reading Primer) 모달
 const primerModal          = $('primer-modal')
@@ -1193,6 +1201,7 @@ function resetState() {
   if (chatResizer) chatResizer.classList.add('hidden')
   if (chatToggleBtn) chatToggleBtn.classList.remove('active')
   hideOutlineSidebar()
+  closeViewerFindBar()
   resetChatUI()
 }
 
@@ -2034,6 +2043,10 @@ function renderTransContent(pageNum, text, cached = false) {
     if (state.sessionId) {
       reRenderPageAnnotations(textLayerDiv, pageNum)
     }
+  }
+
+  if (viewerSearchState.active && viewerSearchState.query && viewerSearchState.scope !== 'pdf') {
+    renderTransSearchHighlightsForPage(pageNum, viewerSearchState.query, viewerSearchState.matches[viewerSearchState.currentIndex])
   }
 
   if (statusEl) { statusEl.textContent = '✓ 완료'; statusEl.classList.add('done') }
@@ -13519,6 +13532,10 @@ window.onTextLayerRendered = (textLayerDiv, pageNum) => {
   renderCitationOverlayLayer(textLayerDiv, pageNum)
   renderFigureRefOverlayLayer(textLayerDiv, pageNum)
 
+  if (viewerSearchState.active && viewerSearchState.query && viewerSearchState.scope !== 'trans') {
+    renderPdfSearchHighlightsForPage(pageNum, viewerSearchState.query, viewerSearchState.matches[viewerSearchState.currentIndex])
+  }
+
   // 이미 번역된 적이 있는 페이지인데 아직 번역 문장 데이터(state.translationSentences)가
   // 로드되지 않았다면, 방금 위에서 실행한 세그멘테이션은 정규식 기반 폴백
   // (splitIntoSentences) 결과다. 번역 캐시가 로드되면 alignSentencesToText로 다시
@@ -14858,9 +14875,24 @@ document.addEventListener('keydown', (e) => {
     trigger?.focus()
     handled = true
   }
+  if (viewerFindBar && !viewerFindBar.classList.contains('hidden')) {
+    closeViewerFindBar()
+    handled = true
+  }
   if (handled) {
     e.preventDefault()
     e.stopPropagation()
+  }
+})
+
+// 전역 Cmd+F / Ctrl+F: 뷰어 화면에서 문서 내 검색 바 열기
+document.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {
+    if (viewerScreen && viewerScreen.classList.contains('active')) {
+      e.preventDefault()
+      e.stopPropagation()
+      openViewerFindBar()
+    }
   }
 })
 
@@ -16983,6 +17015,448 @@ async function locateTermInPdf(pageNum, term, occurrence = 1) {
   }
 }
 
+// ── 문서 뷰어 내 본문 검색 (In-Document Search) ─────────────────
+const viewerSearchState = {
+  active: false,
+  query: '',
+  scope: 'all', // 'all' | 'pdf' | 'trans'
+  matches: [],
+  currentIndex: -1,
+  searchGeneration: 0,
+}
+
+// 뷰어 검색 바 열기
+function openViewerFindBar() {
+  if (!viewerFindBar) return
+  const selText = window.getSelection()?.toString()?.trim() || ''
+  if (selText && selText.length > 0 && selText.length < 80) {
+    if (viewerFindInput) viewerFindInput.value = selText
+  }
+  viewerFindBar.classList.remove('hidden')
+  viewerSearchBtn?.classList.add('active')
+  viewerSearchState.active = true
+  if (viewerFindInput) {
+    viewerFindInput.focus()
+    viewerFindInput.select()
+    if (viewerFindInput.value.trim()) {
+      scheduleViewerSearch(0)
+    }
+  }
+}
+
+// 뷰어 검색 바 닫기
+function closeViewerFindBar() {
+  if (!viewerFindBar) return
+  viewerFindBar.classList.add('hidden')
+  viewerSearchBtn?.classList.remove('active')
+  clearViewerSearchHighlights()
+  viewerSearchState.active = false
+  viewerSearchState.query = ''
+  viewerSearchState.matches = []
+  viewerSearchState.currentIndex = -1
+  if (viewerFindCount) {
+    viewerFindCount.textContent = '0 / 0'
+    viewerFindCount.classList.remove('no-results')
+  }
+}
+
+let viewerSearchDebounceTimer = null
+function scheduleViewerSearch(delayMs = 150) {
+  if (viewerSearchDebounceTimer) clearTimeout(viewerSearchDebounceTimer)
+  viewerSearchDebounceTimer = setTimeout(() => {
+    performViewerSearch(true)
+  }, delayMs)
+}
+
+// 검색 실행
+async function performViewerSearch(resetIndex = true) {
+  const query = viewerFindInput?.value?.trim() || ''
+  const myGen = ++viewerSearchState.searchGeneration
+  viewerSearchState.query = query
+
+  if (!query) {
+    clearViewerSearchHighlights()
+    viewerSearchState.matches = []
+    viewerSearchState.currentIndex = -1
+    if (viewerFindCount) {
+      viewerFindCount.textContent = '0 / 0'
+      viewerFindCount.classList.remove('no-results')
+    }
+    return
+  }
+
+  const qLower = query.toLowerCase()
+  const totalPages = state.totalPages || 1
+  const matches = []
+  const scope = viewerSearchState.scope
+
+  // 1. PDF 원문 텍스트 검색
+  if (scope !== 'trans') {
+    for (let p = 1; p <= totalPages; p++) {
+      if (myGen !== viewerSearchState.searchGeneration) return
+      let text = ''
+      const vtm = state.virtualTextMaps && state.virtualTextMaps[p]
+      if (vtm && vtm.fullText) {
+        text = vtm.fullText
+      } else {
+        text = await getPDFPageText(p)
+      }
+      if (myGen !== viewerSearchState.searchGeneration) return
+
+      if (text) {
+        const textLower = text.toLowerCase()
+        let searchFrom = 0
+        let occ = 0
+        while (true) {
+          const idx = textLower.indexOf(qLower, searchFrom)
+          if (idx === -1) break
+          occ++
+          matches.push({
+            type: 'pdf',
+            pageNum: p,
+            occurrence: occ,
+            charStart: idx,
+            charEnd: idx + query.length,
+          })
+          searchFrom = idx + Math.max(1, query.length)
+        }
+      }
+    }
+  }
+
+  // 2. 번역문 텍스트 검색
+  if (scope !== 'pdf') {
+    for (let p = 1; p <= totalPages; p++) {
+      if (myGen !== viewerSearchState.searchGeneration) return
+      let transText = state.translationCache && state.translationCache[p]
+      if (!transText || transText === '__fetching__') {
+        const transEl = document.getElementById(`trans-content-${p}`)
+        if (transEl) transText = transEl.textContent || ''
+      }
+      if (transText && typeof transText === 'string') {
+        const tLower = transText.toLowerCase()
+        let searchFrom = 0
+        let occ = 0
+        while (true) {
+          const idx = tLower.indexOf(qLower, searchFrom)
+          if (idx === -1) break
+          occ++
+          matches.push({
+            type: 'trans',
+            pageNum: p,
+            occurrence: occ,
+            charStart: idx,
+            charEnd: idx + query.length,
+          })
+          searchFrom = idx + Math.max(1, query.length)
+        }
+      }
+    }
+  }
+
+  if (myGen !== viewerSearchState.searchGeneration) return
+
+  // 3. 읽기 순서대로 정렬 (페이지 오름차순, 동일 페이지 내 위치순)
+  matches.sort((a, b) => {
+    if (a.pageNum !== b.pageNum) return a.pageNum - b.pageNum
+    if (a.type !== b.type) return a.type === 'pdf' ? -1 : 1
+    return a.charStart - b.charStart
+  })
+
+  viewerSearchState.matches = matches
+
+  if (matches.length === 0) {
+    clearViewerSearchHighlights()
+    viewerSearchState.currentIndex = -1
+    if (viewerFindCount) {
+      viewerFindCount.textContent = t('viewer:search.noResults', '결과 없음')
+      viewerFindCount.classList.add('no-results')
+    }
+    return
+  }
+
+  if (viewerFindCount) {
+    viewerFindCount.classList.remove('no-results')
+  }
+
+  // 현재 보고 있는 페이지 이후의 첫 매칭을 시작 위치로 선택
+  let targetIndex = 0
+  if (resetIndex) {
+    const curPage = state.currentPage || 1
+    const foundIdx = matches.findIndex(m => m.pageNum >= curPage)
+    targetIndex = foundIdx !== -1 ? foundIdx : 0
+  } else {
+    targetIndex = Math.min(viewerSearchState.currentIndex, matches.length - 1)
+    if (targetIndex < 0) targetIndex = 0
+  }
+
+  viewerSearchState.currentIndex = targetIndex
+
+  // 보이는 모든 페이지에 검색 하이라이트 표시
+  renderVisibleSearchHighlights(query)
+
+  // 선택된 매칭으로 포커스 이동
+  await goToSearchMatch(viewerSearchState.currentIndex)
+}
+
+// 검색 매칭 탐색 (다음: 1, 이전: -1)
+async function navigateViewerSearch(direction = 1) {
+  if (!viewerSearchState.active || viewerSearchState.matches.length === 0) return
+  const total = viewerSearchState.matches.length
+  viewerSearchState.currentIndex = (viewerSearchState.currentIndex + direction + total) % total
+  await goToSearchMatch(viewerSearchState.currentIndex)
+}
+
+// 지정된 인덱스의 매칭으로 스크롤 및 강조
+async function goToSearchMatch(index) {
+  if (index < 0 || index >= viewerSearchState.matches.length) return
+  const match = viewerSearchState.matches[index]
+  const query = viewerSearchState.query
+
+  if (viewerFindCount) {
+    viewerFindCount.textContent = `${index + 1} / ${viewerSearchState.matches.length}`
+  }
+
+  if (match.type === 'pdf') {
+    await focusActivePdfMatch(match.pageNum, query, match.occurrence)
+  } else if (match.type === 'trans') {
+    focusActiveTransMatch(match.pageNum, query, match.occurrence)
+  }
+}
+
+// PDF 내 특정 매칭 위치로 이동 및 하이라이트 박스 표시
+async function focusActivePdfMatch(pageNum, query, occurrence) {
+  const pw = viewerScrollContainer?.querySelector(`.pdf-page-wrapper[data-page="${pageNum}"]`)
+  if (!pw) return
+
+  let vtm = state.virtualTextMaps && state.virtualTextMaps[pageNum]
+  if (!isVtmFresh(vtm)) {
+    pw.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    const deadline = Date.now() + 2500
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 80))
+      vtm = state.virtualTextMaps && state.virtualTextMaps[pageNum]
+      if (isVtmFresh(vtm)) break
+    }
+  }
+
+  renderPdfSearchHighlightsForPage(pageNum, query, { type: 'pdf', pageNum, occurrence })
+
+  const activeBox = pw.querySelector('.search-highlight-box.active')
+  if (activeBox) {
+    const pwRect = pw.getBoundingClientRect()
+    const containerRect = viewerScrollContainer.getBoundingClientRect()
+    const boxTop = parseFloat(activeBox.style.top) || 0
+    const boxHeight = parseFloat(activeBox.style.height) || 20
+    const targetScrollTop = viewerScrollContainer.scrollTop + pwRect.top - containerRect.top + boxTop - (containerRect.height / 2) + (boxHeight / 2)
+    viewerScrollContainer.scrollTo({ top: Math.max(0, targetScrollTop), behavior: 'smooth' })
+  } else {
+    pw.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+}
+
+// 번역문 내 특정 매칭 위치로 이동 및 강조
+function focusActiveTransMatch(pageNum, query, occurrence) {
+  const transBlock = document.getElementById(`trans-block-${pageNum}`)
+  if (!transBlock) return
+
+  renderTransSearchHighlightsForPage(pageNum, query, { type: 'trans', pageNum, occurrence })
+
+  const activeMark = transBlock.querySelector(`mark.find-trans-hit.active`)
+  if (activeMark) {
+    activeMark.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    const transSent = activeMark.closest('.trans-sentence')
+    if (transSent && transSent.dataset.sentenceIdx) {
+      const sIdx = parseInt(transSent.dataset.sentenceIdx, 10)
+      pulseMatchingPdfSentence(pageNum, sIdx)
+    }
+  } else {
+    transBlock.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+}
+
+function pulseMatchingPdfSentence(pageNum, sIdx) {
+  const pw = viewerScrollContainer?.querySelector(`.pdf-page-wrapper[data-page="${pageNum}"]`)
+  if (!pw) return
+  const sentenceRanges = state.pdfPageSentences && state.pdfPageSentences[pageNum]
+  const vtm = state.virtualTextMaps && state.virtualTextMaps[pageNum]
+  const textLayer = pw.querySelector('.textLayer')
+  if (sentenceRanges && vtm && textLayer) {
+    const sRange = sentenceRanges.find(r => r.sentenceIdx === sIdx)
+    if (sRange) {
+      const rects = getSentenceRects(sRange, vtm, textLayer)
+      if (rects.length > 0) {
+        const overlay = getOrCreateOverlay(pw)
+        renderSentenceOverlay(overlay, rects, 'sentence-pulse-box')
+        setTimeout(() => clearOverlayBoxes(overlay, 'sentence-pulse-box'), 1500)
+      }
+    }
+  }
+}
+
+// 특정 PDF 페이지의 검색 하이라이트 상자 렌더링
+function renderPdfSearchHighlightsForPage(pageNum, query, activeMatch = null) {
+  const pw = viewerScrollContainer?.querySelector(`.pdf-page-wrapper[data-page="${pageNum}"]`)
+  if (!pw) return
+  const overlay = getOrCreateOverlay(pw)
+  clearOverlayBoxes(overlay, 'search-highlight-box')
+  if (!query || viewerSearchState.scope === 'trans') return
+
+  const vtm = state.virtualTextMaps && state.virtualTextMaps[pageNum]
+  const textLayer = pw.querySelector('.textLayer')
+  if (!isVtmFresh(vtm) || !textLayer) return
+
+  const fullTextLower = vtm.fullText.toLowerCase()
+  const qLower = query.toLowerCase()
+  let searchFrom = 0
+  let occ = 0
+
+  while (true) {
+    const idx = fullTextLower.indexOf(qLower, searchFrom)
+    if (idx === -1) break
+    occ++
+    const charStart = idx
+    const charEnd = idx + query.length
+    const rects = getSentenceRects({ charStart, charEnd }, vtm, textLayer)
+    const isActive = activeMatch && activeMatch.type === 'pdf' && activeMatch.pageNum === pageNum && activeMatch.occurrence === occ
+    const boxClass = isActive ? 'search-highlight-box active' : 'search-highlight-box'
+    renderSentenceOverlay(overlay, rects, boxClass)
+    searchFrom = idx + Math.max(1, query.length)
+  }
+}
+
+// 특정 번역 페이지의 검색어 <mark> 하이라이트 렌더링
+function renderTransSearchHighlightsForPage(pageNum, query, activeMatch = null) {
+  const transContent = document.getElementById(`trans-content-${pageNum}`)
+  if (!transContent) return
+  clearTransSearchHighlights(pageNum)
+  if (!query || viewerSearchState.scope === 'pdf') return
+
+  const activeOcc = (activeMatch && activeMatch.type === 'trans' && activeMatch.pageNum === pageNum)
+    ? activeMatch.occurrence
+    : -1
+
+  const qLower = query.toLowerCase()
+  const walker = document.createTreeWalker(transContent, NodeFilter.SHOW_TEXT)
+  const textNodes = []
+  let node
+  while ((node = walker.nextNode())) {
+    if (node.textContent && node.textContent.toLowerCase().includes(qLower)) {
+      if (!node.parentElement?.closest('mark, button, input, textarea, .trans-resizer-handle')) {
+        textNodes.push(node)
+      }
+    }
+  }
+
+  let occ = 0
+  for (const textNode of textNodes) {
+    const parent = textNode.parentNode
+    if (!parent) continue
+    const text = textNode.textContent
+    const tLower = text.toLowerCase()
+    let lastIdx = 0
+    const frag = document.createDocumentFragment()
+    let matchIdx = tLower.indexOf(qLower, lastIdx)
+
+    while (matchIdx !== -1) {
+      if (matchIdx > lastIdx) {
+        frag.appendChild(document.createTextNode(text.substring(lastIdx, matchIdx)))
+      }
+      occ++
+      const mark = document.createElement('mark')
+      mark.className = 'find-trans-hit'
+      mark.dataset.occurrence = occ
+      if (occ === activeOcc) {
+        mark.classList.add('active')
+      }
+      mark.textContent = text.substring(matchIdx, matchIdx + query.length)
+      frag.appendChild(mark)
+
+      lastIdx = matchIdx + query.length
+      matchIdx = tLower.indexOf(qLower, lastIdx)
+    }
+
+    if (lastIdx < text.length) {
+      frag.appendChild(document.createTextNode(text.substring(lastIdx)))
+    }
+    parent.replaceChild(frag, textNode)
+  }
+}
+
+function clearTransSearchHighlights(pageNum) {
+  const transContent = document.getElementById(`trans-content-${pageNum}`)
+  if (!transContent) return
+  const marks = transContent.querySelectorAll('mark.find-trans-hit')
+  marks.forEach(mark => {
+    const parent = mark.parentNode
+    if (parent) {
+      parent.replaceChild(document.createTextNode(mark.textContent), mark)
+    }
+  })
+  transContent.normalize()
+}
+
+// 모든 보이는 페이지에 대해 검색 하이라이트 동기화
+function renderVisibleSearchHighlights(query) {
+  if (!viewerScrollContainer) return
+  const currentMatch = viewerSearchState.matches[viewerSearchState.currentIndex] || null
+  for (let p = 1; p <= (state.totalPages || 1); p++) {
+    renderPdfSearchHighlightsForPage(p, query, currentMatch)
+    renderTransSearchHighlightsForPage(p, query, currentMatch)
+  }
+}
+
+// 전체 검색 하이라이트 제거
+function clearViewerSearchHighlights() {
+  if (viewerScrollContainer) {
+    viewerScrollContainer.querySelectorAll('.pdf-highlight-overlay').forEach(overlay => {
+      clearOverlayBoxes(overlay, 'search-highlight-box')
+    })
+  }
+  for (let p = 1; p <= (state.totalPages || 1); p++) {
+    clearTransSearchHighlights(p)
+  }
+}
+
+function initViewerFindBar() {
+  if (!viewerFindBar) return
+
+  viewerSearchBtn?.addEventListener('click', () => {
+    if (viewerSearchState.active) {
+      closeViewerFindBar()
+    } else {
+      openViewerFindBar()
+    }
+  })
+
+  viewerFindInput?.addEventListener('input', () => {
+    scheduleViewerSearch(150)
+  })
+
+  viewerFindInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      navigateViewerSearch(e.shiftKey ? -1 : 1)
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      closeViewerFindBar()
+    }
+  })
+
+  viewerFindPrevBtn?.addEventListener('click', () => navigateViewerSearch(-1))
+  viewerFindNextBtn?.addEventListener('click', () => navigateViewerSearch(1))
+  viewerFindCloseBtn?.addEventListener('click', () => closeViewerFindBar())
+
+  viewerFindScope?.querySelectorAll('.find-scope-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      viewerFindScope.querySelectorAll('.find-scope-btn').forEach(b => b.classList.remove('active'))
+      btn.classList.add('active')
+      viewerSearchState.scope = btn.dataset.scope || 'all'
+      performViewerSearch(true)
+    })
+  })
+}
+
 // 메인 진입점: buildVirtualTextMap → alignSentencesToText → state 저장 → 메모 오버레이 렌더링
 function segmentPdfElements(container, pageNum) {
   try {
@@ -18738,6 +19212,9 @@ if (outlineCloseBtn) {
     if (event.key === 'Escape') { event.preventDefault(); hideOutlineSidebar({ restoreFocus: true }) }
   })
 }
+
+// ── 본문 검색(Find) 바 초기화 ───────────────────────
+initViewerFindBar()
 
 // ── 번역 문장 더블클릭 수동 수정 (Inline Edit) ──────
 if (viewerScrollContainer) {

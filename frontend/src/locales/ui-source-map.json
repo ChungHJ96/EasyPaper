@@ -1146,4 +1146,12 @@
   ,"배경 디밍": "settings:focusDim"
   ,"문장 확대": "settings:focusScale"
   ,"문장을 클릭해 고정한 뒤 방향키로 이동하고 Esc로 해제": "settings:focusKeyboardHelp"
+  ,"문서 내 검색 (Cmd+F / Ctrl+F)": "viewer:search.btnTitle"
+  ,"문서 내 검색": "viewer:search.btnTitle"
+  ,"원문 또는 번역 검색...": "viewer:search.placeholder"
+  ,"원문": "viewer:search.pdf"
+  ,"이전 (Shift+Enter)": "viewer:search.prev"
+  ,"다음 (Enter)": "viewer:search.next"
+  ,"닫기 (Esc)": "viewer:search.close"
+  ,"결과 없음": "viewer:search.noResults"
 }

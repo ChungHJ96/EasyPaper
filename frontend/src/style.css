@@ -8102,3 +8102,212 @@ body.light-theme .chat-drawer {
   outline: none !important;
   animation: none !important;
 }
+
+/* ── 문서 뷰어 내 검색 바 (Find Bar) ── */
+.viewer-find-bar {
+  position: absolute;
+  top: 54px;
+  right: 24px;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg-surface, rgba(24, 24, 27, 0.94));
+  border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.15));
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+body.light-theme .viewer-find-bar {
+  background: rgba(255, 255, 255, 0.96);
+  border-color: rgba(0, 0, 0, 0.12);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.12);
+}
+
+.viewer-find-bar.hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-8px);
+}
+
+.find-bar-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: var(--bg-elevated, rgba(255, 255, 255, 0.08));
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+  border-radius: 8px;
+  padding: 0 8px 0 10px;
+  transition: border-color 0.15s ease;
+}
+
+body.light-theme .find-bar-input-wrap {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+}
+
+.find-bar-input-wrap:focus-within {
+  border-color: var(--control-accent, #3b82f6);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.find-bar-search-icon {
+  color: var(--text-muted, #94a3b8);
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+
+#viewer-find-input {
+  width: 170px;
+  padding: 6px 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 13px;
+  color: var(--text-primary, #f1f5f9);
+}
+
+body.light-theme #viewer-find-input {
+  color: #0f172a;
+}
+
+.find-bar-count {
+  font-size: 11.5px;
+  color: var(--text-muted, #94a3b8);
+  margin-left: 8px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  min-width: 38px;
+  text-align: right;
+  user-select: none;
+}
+
+.find-bar-count.no-results {
+  color: var(--error, #ef4444);
+}
+
+.find-bar-scope-toggle {
+  display: inline-flex;
+  background: var(--bg-primary, rgba(0, 0, 0, 0.25));
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+
+body.light-theme .find-bar-scope-toggle {
+  background: #e2e8f0;
+}
+
+.find-scope-btn {
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary, #94a3b8);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.find-scope-btn.active {
+  background: var(--bg-elevated, #374151);
+  color: var(--text-primary, #ffffff);
+  font-weight: 600;
+}
+
+body.light-theme .find-scope-btn.active {
+  background: #ffffff;
+  color: #0f172a;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.find-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.find-bar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary, #94a3b8);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.find-bar-btn:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.1));
+  color: var(--text-primary, #ffffff);
+}
+
+body.light-theme .find-bar-btn:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.find-bar-divider {
+  width: 1px;
+  height: 14px;
+  background: var(--border, rgba(255, 255, 255, 0.15));
+  margin: 0 4px;
+}
+
+body.light-theme .find-bar-divider {
+  background: #cbd5e1;
+}
+
+/* ── 검색 매칭 하이라이트 스타일 (PDF 및 번역) ── */
+.search-highlight-box {
+  position: absolute;
+  pointer-events: none !important;
+  box-sizing: border-box;
+  background: rgba(254, 240, 138, 0.45);
+  border-bottom: 2px solid rgba(234, 179, 8, 0.85);
+  border-radius: 2px;
+  z-index: 10;
+  transition: background-color 0.15s ease;
+}
+
+.search-highlight-box.active {
+  background: rgba(251, 146, 60, 0.65) !important;
+  border: 2px solid #ea580c !important;
+  z-index: 12;
+  box-shadow: 0 0 10px rgba(234, 88, 12, 0.6);
+  animation: search-pulse-glow 0.8s ease-in-out infinite alternate;
+}
+
+@keyframes search-pulse-glow {
+  0% { transform: scale(1); box-shadow: 0 0 6px rgba(234, 88, 12, 0.5); }
+  100% { transform: scale(1.02); box-shadow: 0 0 14px rgba(234, 88, 12, 0.9); }
+}
+
+mark.find-trans-hit {
+  background-color: rgba(254, 240, 138, 0.5);
+  color: inherit;
+  padding: 1px 2px;
+  border-radius: 2px;
+  transition: all 0.15s ease;
+}
+
+body.light-theme mark.find-trans-hit {
+  background-color: rgba(253, 224, 71, 0.6);
+}
+
+mark.find-trans-hit.active {
+  background-color: #ea580c !important;
+  color: #ffffff !important;
+  border-radius: 3px;
+  outline: 2px solid #c2410c;
+  box-shadow: 0 0 8px rgba(234, 88, 12, 0.6);
+}

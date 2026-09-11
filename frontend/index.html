@@ -444,6 +444,12 @@
 
         <!-- AI 어시스턴트 및 대화식 조작 도구 그룹 -->
         <div class="toolbar-group tool-group">
+          <button id="viewer-search-btn" class="icon-btn" title="문서 내 검색 (Cmd+F / Ctrl+F)" data-i18n-title="viewer:search.btnTitle">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+          </button>
           <button id="capture-area-btn" class="icon-btn" title="영역 캡처하여 질문하기">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect width="18" height="18" x="3" y="3" rx="2" ry="2"/>
@@ -549,6 +555,32 @@
         </div>
       </div>
     </header>
+ 
+    <!-- 문서 내 통합 검색 바 (Cmd+F / Ctrl+F) -->
+    <div id="viewer-find-bar" class="viewer-find-bar hidden" role="search" aria-label="문서 내 검색">
+      <div class="find-bar-input-wrap">
+        <svg class="find-bar-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" id="viewer-find-input" placeholder="원문 또는 번역 검색..." data-i18n-placeholder="viewer:search.placeholder" autocomplete="off" spellcheck="false" />
+        <span id="viewer-find-count" class="find-bar-count">0 / 0</span>
+      </div>
+      <div class="find-bar-scope-toggle" id="viewer-find-scope">
+        <button type="button" class="find-scope-btn active" data-scope="all" data-i18n="viewer:search.all">전체</button>
+        <button type="button" class="find-scope-btn" data-scope="pdf" data-i18n="viewer:search.pdf">원문</button>
+        <button type="button" class="find-scope-btn" data-scope="trans" data-i18n="viewer:search.trans">번역</button>
+      </div>
+      <div class="find-bar-actions">
+        <button type="button" id="viewer-find-prev-btn" class="find-bar-btn" title="이전 (Shift+Enter)" data-i18n-title="viewer:search.prev">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg>
+        </button>
+        <button type="button" id="viewer-find-next-btn" class="find-bar-btn" title="다음 (Enter)" data-i18n-title="viewer:search.next">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="find-bar-divider"></div>
+        <button type="button" id="viewer-find-close-btn" class="find-bar-btn" title="닫기 (Esc)" data-i18n-title="viewer:search.close">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+    </div>
 
     <div id="viewer-document-info-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="viewer-document-info-title">
       <div class="modal-content viewer-document-info-dialog">

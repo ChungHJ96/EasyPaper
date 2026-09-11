@@ -79,5 +79,14 @@
   "chapter.cancel": "Cancel full summary",
   "chapter.cancelled": "The full summary task was cancelled.",
   "chapter.cancelFailed": "Failed to cancel the full summary.",
-  "cacheClearedReload": "PDF extraction and translation cache deleted. Reloading viewer."
+  "cacheClearedReload": "PDF extraction and translation cache deleted. Reloading viewer.",
+  "search.btnTitle": "Find in document (Cmd+F / Ctrl+F)",
+  "search.placeholder": "Search original or translation...",
+  "search.all": "All",
+  "search.pdf": "Original",
+  "search.trans": "Translation",
+  "search.prev": "Previous (Shift+Enter)",
+  "search.next": "Next (Enter)",
+  "search.close": "Close (Esc)",
+  "search.noResults": "No results"
 }

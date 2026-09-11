@@ -21,13 +21,17 @@ def extract_pages(pdf_path: str, engine: Optional[str] = None) -> List[Dict[str,
     engine = (engine or "pymupdf").lower().strip()
 
     if engine == "pdfplumber":
-        return _extract_pages_pdfplumber(pdf_path)
+        pages = _extract_pages_pdfplumber(pdf_path)
     elif engine == "marker":
-        return _extract_pages_marker(pdf_path)
+        pages = _extract_pages_marker(pdf_path)
     elif engine == "mineru":
-        return _extract_pages_mineru(pdf_path)
+        pages = _extract_pages_mineru(pdf_path)
     else:
-        return _extract_pages_pymupdf(pdf_path)
+        pages = _extract_pages_pymupdf(pdf_path)
+
+    if pages:
+        pages = filter_repeated_headers_footers(pages)
+    return pages
 
 
 def _extract_pages_pymupdf(pdf_path: str) -> List[Dict[str, Any]]:
@@ -41,6 +45,8 @@ def _extract_pages_pymupdf(pdf_path: str) -> List[Dict[str, Any]]:
             page_data["parser_engine"] = "pymupdf"
             pages.append(page_data)
 
+        if pages:
+            pages = filter_repeated_headers_footers(pages)
         return pages
     finally:
         doc.close()
@@ -156,11 +162,12 @@ def _find_cross_page_split(item_text: str, current_fitz_text: str, next_fitz_tex
 
 _METADATA_PATTERNS = [
     # 저널명, 권/호, 페이지 슬러그 (예: Functional Ecology 2005 19, 129–135, Vol. 19, pp. 129-135)
-    re.compile(r'\b(?:(?:Functional\s+)?Ecology|Journal\s+of|Transactions\s+on|Proceedings\s+of|ECOSPHERE)\b', re.IGNORECASE),
+    re.compile(r'\b(?:(?:Functional\s+)?Ecology|Journal\s+of|Transactions\s+on|Proceedings\s+of|ECOSPHERE|BioScience|Nature|Science|PLoS|IEEE|ACM|Frontiers)\b', re.IGNORECASE),
     re.compile(r'\b(?:\(?\d{4}\)?\s+)?\d{1,4},\s*\d{1,5}[–-]\d{1,5}\b'),
     re.compile(r'\b(?:Vol(?:ume)?\.?\s*\d+|Issue\s*\d+|pp?\.?\s*\d+[–-]\d+|Article\s*[a-z]?\d+)\b', re.IGNORECASE),
+    re.compile(r'\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b', re.IGNORECASE),
     # 저작권 및 출판사 표기
-    re.compile(r'(?:©|Copyright|All\s+rights\s+reserved|British\s+Ecological\s+Society|Blackwell|Elsevier|Springer|Wiley|IEEE|ACM)', re.IGNORECASE),
+    re.compile(r'(?:©|Copyright|All\s+rights\s+reserved|British\s+Ecological\s+Society|Blackwell|Elsevier|Springer|Wiley|IEEE|ACM|Frontiers)', re.IGNORECASE),
     # 논문 심사 및 투고 일정
     re.compile(r'\b(?:Received|Accepted|Revised|Published\s+online|Available\s+online)\b.*?\b(?:19|20)\d{2}\b', re.IGNORECASE),
     # 교신저자 정보 / 이메일
@@ -175,6 +182,39 @@ _CAPTION_HEADER_PREFIX_RE = re.compile(
 )
 
 
+def normalize_header_fingerprint(text: str) -> str:
+    """헤더/푸터 텍스트에서 쪽번호, 구분 기호, 공백 등을 제거하여
+    홀수/짝수 페이지 간 공통 시그니처를 추출합니다."""
+    cleaned = re.sub(r'^\s*\d{1,5}\s*|\s*\d{1,5}\s*$', '', text).strip()
+    cleaned = re.sub(r'^[|\-–•\s]+|[|\-–•\s]+$', '', cleaned).strip()
+    return re.sub(r'[^a-zA-Z0-9]', '', cleaned).lower()
+
+
+def is_margin_block(bbox: List[float], page_width: float = 612.0, page_height: float = 792.0) -> bool:
+    """블록의 bbox가 상단/하단 또는 좌우 마진 영역에 위치하는지 검사합니다."""
+    if not bbox or len(bbox) < 4:
+        return False
+    x0, y0, x1, y1 = bbox[:4]
+    # 더미 bbox는 마진 블록으로 보지 않음
+    if x0 <= 0.0 and y0 <= 0.0 and x1 >= 900.0 and y1 >= 900.0:
+        return False
+    pw = max(page_width, 100.0)
+    ph = max(page_height, 100.0)
+    # 상단 마진 (상위 12% 또는 y1 < 75pt)
+    if y1 < ph * 0.12 or y0 < 75.0:
+        return True
+    # 하단 마진 (하위 12% 또는 y0 > ph - 75pt)
+    if y0 > ph * 0.88 or y1 > ph - 75.0:
+        return True
+    # 좌측 마진 슬러그 (좌측 15% 이내)
+    if x1 < pw * 0.15:
+        return True
+    # 우측 마진 슬러그 (우측 15% 이내)
+    if x0 > pw * 0.85:
+        return True
+    return False
+
+
 def is_metadata_text(text: str, page_idx: int = 0, paper_title: str = "") -> bool:
     """텍스트가 논문 본문이 아닌 출판 메타데이터나 러닝헤더/푸터인지 판별합니다.
     좌표에 의존하지 않고 내용 시그니처와 2페이지 이후 러닝 타이틀 패턴을 검사합니다."""
@@ -185,12 +225,15 @@ def is_metadata_text(text: str, page_idx: int = 0, paper_title: str = "") -> boo
         return False
     if cleaned.startswith("<sub>") and cleaned.endswith("</sub>"):
         return True
+    if re.fullmatch(r'\d{1,5}', cleaned):
+        return True
     for pat in _METADATA_PATTERNS:
         if pat.search(cleaned):
             return True
-    # 저자 et al. 단독 러닝헤더 (예: 130 K. C. Harding et al.)
-    if re.search(r'^(?:\d{1,4}\s+)?[A-Z]\.\s*(?:[A-Z]\.\s*)?[A-Za-z\-]+(?:\s+et\s+al\.?)?$', cleaned, re.IGNORECASE):
-        return True
+    # 저자 et al. 단독 러닝헤더 (예: 130 K. C. Harding et al., SILVA ET AL., Harding & Härkönen 132)
+    if re.search(r'^(?:\d{1,4}\s+)?(?:[A-Z][a-zA-Z\.\s\-–&,]+(?:\s+et\s+al\.?)?)(?:\s+\d{1,4})?$', cleaned, re.IGNORECASE):
+        if len(cleaned) < 80 and (re.search(r'\bet\s+al\b', cleaned, re.IGNORECASE) or '&' in cleaned or re.search(r'\b[A-Z]\.', cleaned)):
+            return True
     # 2페이지 이후의 단독 러닝 타이틀 (제목 유사 단문)
     if page_idx >= 1 and paper_title:
         c_norm = re.sub(r'[^a-zA-Z0-9\s]', '', re.sub(r'^\d+\s*|\s*\d+$', '', cleaned)).lower().strip()
@@ -198,6 +241,102 @@ def is_metadata_text(text: str, page_idx: int = 0, paper_title: str = "") -> boo
         if c_norm and len(c_norm) > 5 and (c_norm in t_norm or t_norm in c_norm):
             return True
     return False
+
+
+def filter_repeated_headers_footers(pages: List[Dict[str, Any]], paper_title: str = "") -> List[Dict[str, Any]]:
+    """홀수 페이지와 짝수 페이지 각각의 반복 패턴 및 마진 메타데이터를 감지하여 제거합니다."""
+    if not pages:
+        return pages
+
+    even_fp_pages: Dict[str, List[int]] = {}
+    odd_fp_pages: Dict[str, List[int]] = {}
+    all_fp_pages: Dict[str, List[int]] = {}
+
+    for p in pages:
+        p_num = p.get("page_num", 1)
+        pw = float(p.get("width", 612.0) or 612.0)
+        ph = float(p.get("height", 792.0) or 792.0)
+        is_even = (p_num % 2 == 0)
+
+        for b in p.get("blocks", []):
+            txt = b.get("text", "").strip()
+            bbox = b.get("bbox", [])
+            if not txt or len(txt) > 300:
+                continue
+            if not is_margin_block(bbox, pw, ph):
+                continue
+
+            fp = normalize_header_fingerprint(txt)
+            if not fp:
+                continue
+
+            all_fp_pages.setdefault(fp, []).append(p_num)
+            if is_even:
+                even_fp_pages.setdefault(fp, []).append(p_num)
+            else:
+                odd_fp_pages.setdefault(fp, []).append(p_num)
+
+    # 반복되는 패턴 목록 (홀수 페이지 >= 2회, 짝수 페이지 >= 2회, 전체 >= 2회)
+    repeating_fps = set()
+    for fp, p_list in even_fp_pages.items():
+        if len(set(p_list)) >= 2:
+            repeating_fps.add(fp)
+    for fp, p_list in odd_fp_pages.items():
+        if len(set(p_list)) >= 2:
+            repeating_fps.add(fp)
+    for fp, p_list in all_fp_pages.items():
+        if len(set(p_list)) >= 2:
+            repeating_fps.add(fp)
+
+    filtered_pages = []
+
+    for p in pages:
+        p_num = p.get("page_num", 1)
+        pw = float(p.get("width", 612.0) or 612.0)
+        ph = float(p.get("height", 792.0) or 792.0)
+        new_blocks = []
+
+        for b in p.get("blocks", []):
+            txt = b.get("text", "").strip()
+            bbox = b.get("bbox", [])
+            in_margin = is_margin_block(bbox, pw, ph)
+            fp = normalize_header_fingerprint(txt)
+
+            # 1) 홀수/짝수 반복 헤더/푸터 매칭
+            if in_margin and fp and fp in repeating_fps:
+                continue
+
+            # 2) 단독 마진 쪽번호 (예: "130", "131", "8")
+            if in_margin and re.fullmatch(r'\d{1,5}', txt):
+                continue
+
+            # 3) 내용 기반 메타데이터/러닝헤더 검사
+            if is_metadata_text(txt, p_num - 1, paper_title):
+                continue
+
+            new_blocks.append(b)
+
+        p_copy = dict(p)
+        p_copy["blocks"] = new_blocks
+
+        # 캡션(type==1)을 제외한 본문 블록만 텍스트로 재구성
+        body_blocks = [b for b in new_blocks if b.get("type") == 0]
+        caption_blocks = [b for b in new_blocks if b.get("type") == 1]
+
+        body_str = "\n\n".join(b.get("text", "") for b in body_blocks).strip()
+        caption_str = "\n\n".join(b.get("text", "") for b in caption_blocks).strip()
+
+        if body_str and caption_str:
+            p_text = f"{body_str}\n\n{caption_str}"
+        elif body_str:
+            p_text = body_str
+        else:
+            p_text = caption_str
+
+        p_copy["text"] = clean_text_for_translation(p_text)
+        filtered_pages.append(p_copy)
+
+    return filtered_pages
 
 
 def sanitize_mineru_pages(pages: List[Dict[str, Any]], pdf_path: str) -> List[Dict[str, Any]]:
@@ -217,7 +356,7 @@ def sanitize_mineru_pages(pages: List[Dict[str, Any]], pdf_path: str) -> List[Di
         for b in pages[0].get("blocks", []):
             t_cand = b.get("text", "").strip()
             if t_cand and len(t_cand) > 10 and not is_metadata_text(t_cand, 0, ""):
-                detected_title = t_cand.split("\n")[0].strip()
+                detected_title = re.sub(r'\s+', ' ', t_cand).strip()
                 break
 
     for p_idx in range(len(pages)):
@@ -263,6 +402,8 @@ def sanitize_mineru_pages(pages: List[Dict[str, Any]], pdf_path: str) -> List[Di
             next_p["blocks"] = spillover_blocks + next_p.get("blocks", [])
             next_p["text"] = clean_text_for_translation("\n\n".join(b["text"] for b in next_p["blocks"]).strip())
 
+    if pages:
+        pages = filter_repeated_headers_footers(pages, paper_title=detected_title)
     return pages
 
 
@@ -325,7 +466,7 @@ def _build_mineru_pages(content_list: Any, total_pages: int = 0, pdf_path: Optio
     for item in pages_items.get(0, []):
         t_cand = _mineru_item_text(item).strip()
         if t_cand and len(t_cand) > 10 and not is_metadata_text(t_cand, 0, ""):
-            detected_title = t_cand.split("\n")[0].strip()
+            detected_title = re.sub(r'\s+', ' ', t_cand).strip()
             break
 
     max_page_idx = max(pages_items.keys()) if pages_items else 0
@@ -393,6 +534,8 @@ def _build_mineru_pages(content_list: Any, total_pages: int = 0, pdf_path: Optio
             "parser_engine": "mineru",
         })
 
+    if pages:
+        pages = filter_repeated_headers_footers(pages, paper_title=detected_title)
     return pages
 
 

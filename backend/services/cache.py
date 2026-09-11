@@ -142,10 +142,13 @@ def get_cached_pages(doc_id: str, pdf_path: str, engine: str | None = None,
         ):
             return None
         pages = data.get("pages")
-        if pages and data.get("parser_engine") == "mineru":
+        if pages:
             try:
-                from services.pdf_parser import sanitize_mineru_pages
-                pages = sanitize_mineru_pages(pages, pdf_path)
+                from services.pdf_parser import sanitize_mineru_pages, filter_repeated_headers_footers
+                if data.get("parser_engine") == "mineru":
+                    pages = sanitize_mineru_pages(pages, pdf_path)
+                else:
+                    pages = filter_repeated_headers_footers(pages)
             except Exception:
                 pass
         return pages

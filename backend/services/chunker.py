@@ -219,6 +219,8 @@ def is_running_header_footer(block: dict) -> bool:
     text = block.get("text", "").strip()
     if not text:
         return True
+    if re.fullmatch(r'\d{1,5}', text):
+        return True
     try:
         from services.pdf_parser import is_metadata_text
         if is_metadata_text(text):

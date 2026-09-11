@@ -13994,7 +13994,11 @@ function renderCitationOverlayLayer(textLayerDiv, pageNum) {
   // refMap에 실제로 존재하는 키의 원문을 전부 이어붙여 보여준다("[66-69]"
   // 같은 범위 인용이 여러 참고문헌을 한 번에 가리키는 경우를 위함).
   const addCitationBox = (charStart, charEnd, refKeys) => {
+    const hasRefMap = refMap && Object.keys(refMap).length > 0
     const validKeys = refKeys.filter(k => refMap[k])
+    // refMap이 존재하는 문서에서는 실제 참고문헌 목록에 매핑되는 키가 없으면 오버레이 박스를 그리지 않는다
+    // ("133 pups" 같은 본문 내 일반 수치나 비인용 괄호 문구가 거짓 인용 링크로 잡히는 오탐 방지)
+    if (hasRefMap && validKeys.length === 0) return
     const keysToUse = validKeys.length > 0 ? validKeys : refKeys
     if (keysToUse.length === 0) return
     const rects = getSentenceRects({ charStart, charEnd }, vtm, textLayerDiv)
@@ -14021,10 +14025,14 @@ function renderCitationOverlayLayer(textLayerDiv, pageNum) {
           event.preventDefault(); hideCitationTooltip(); box.focus()
         }
       })
-      // 클릭 시 팝업을 고정(pinned: true)하여 닫히지 않고 Zotero처럼 유지
+      // 클릭 시 팝업 토글: 이미 열려 있는 상태에서 다시 누르면 닫고, 아니면 고정(pinned: true)
       box.addEventListener('click', (e) => {
         e.preventDefault()
         e.stopPropagation()
+        if (citationTooltipEl && !citationTooltipEl.classList.contains('hidden') && citationTooltipBoxEl === box) {
+          hideCitationTooltip()
+          return
+        }
         globalAnalyticsTracker.trackInteraction('citationClick', pageNum)
         showCitationTooltip(docId, keysToUse, refMap, box, { focus: true, pinned: true })
       })
@@ -14288,10 +14296,14 @@ function renderFigureRefOverlayLayer(textLayerDiv, pageNum) {
       // 한 번에 가리키는 표기("Figures 1 and 2")는 첫 번째 대상 기준으로
       // 이동하고, 나머지는 미리보기 툴팁 안의 각 항목을 클릭해 개별 이동한다.
       // Zotero 스타일: 클릭 시 독서 흐름을 깨며 다른 페이지로 이동하지 않고,
-      // 그 자리에 고해상도 그림/표 팝업을 고정(pinned: true)하여 표시
+      // 그 자리에 고해상도 그림/표 팝업을 고정(pinned: true)하여 표시 (재클릭 시 닫기 토글)
       box.addEventListener('click', (e) => {
         e.preventDefault()
         e.stopPropagation()
+        if (figurePreviewTooltipEl && !figurePreviewTooltipEl.classList.contains('hidden') && figurePreviewBoxEl === box) {
+          hideFigurePreviewTooltip()
+          return
+        }
         window.getSelection().removeAllRanges()
         const interactionType = kind === 'Table' ? 'tableClick' : (kind === 'Equation' ? 'equationClick' : 'figureClick')
         globalAnalyticsTracker.trackInteraction(interactionType, pageNum)
@@ -14307,6 +14319,8 @@ let figurePreviewTooltipEl = null
 let figurePreviewHideTimer = null
 let figurePreviewBoxEl = null
 let figurePreviewRequestId = 0
+let figurePreviewIsPinned = false
+let figurePreviewClosedAt = 0
 // 리사이즈 드래그 도중, 아직 커지지 않은 박스 경계를 커서가 순간적으로
 // 벗어나 mouseleave가 튀는 경우가 있다 - 드래그 중엔 hide 스케줄 자체를
 // 완전히 무시해 박스가 리사이즈 도중 사라지는 것을 막는다.
@@ -14330,7 +14344,10 @@ function getOrCreateFigurePreviewTooltip() {
   el.setAttribute('role', 'dialog')
   el.setAttribute('aria-label', t('viewer:a11y.figureTrigger', { label: '' }))
   el.innerHTML = `
-    <button type="button" class="figure-preview-close-btn" aria-label="닫기" style="position:absolute;top:6px;right:6px;z-index:10;background:none;border:none;font-size:14px;color:var(--text-muted);cursor:pointer;padding:2px 6px;border-radius:4px">✕</button>
+    <div class="figure-preview-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid var(--border,#e2e8f0)">
+      <div class="figure-preview-header-title" style="font-size:11px;font-weight:600;color:var(--text-muted,#94a3b8)">${t('common:legacy.ui.0258')} (Preview)</div>
+      <button type="button" class="figure-preview-close-btn" aria-label="Close" title="Close (Esc)" style="border:none;background:var(--bg-hover, rgba(128,128,128,0.15));cursor:pointer;font-size:14px;color:var(--text-primary);padding:3px 8px;border-radius:4px;line-height:1;display:flex;align-items:center;justify-content:center;font-weight:bold">✕</button>
+    </div>
     <div class="figure-preview-tooltip-items"></div>
     <button type="button" class="figure-preview-tooltip-resize-handle handle-nw" data-corner="nw" title="${t('viewer:a11y.figureResize')}" aria-label="${t('viewer:a11y.figureResize')}"></button>
     <button type="button" class="figure-preview-tooltip-resize-handle handle-ne" data-corner="ne" title="${t('viewer:a11y.figureResize')}" aria-label="${t('viewer:a11y.figureResize')}"></button>
@@ -14470,6 +14487,7 @@ function positionFigurePreviewTooltip() {
 // targets: documentImages 항목 배열(1개 이상)
 async function showFigurePreviewTooltip(targets, boxEl, { focus = false, pinned = false } = {}) {
   if (state.isSelectionDragging) return
+  if (!pinned && Date.now() - figurePreviewClosedAt < 350) return
   if (figurePreviewHideTimer) { clearTimeout(figurePreviewHideTimer); figurePreviewHideTimer = null }
   if (figurePreviewBoxEl && figurePreviewBoxEl !== boxEl) figurePreviewBoxEl.setAttribute('aria-expanded', 'false')
   figurePreviewBoxEl = boxEl
@@ -14520,6 +14538,7 @@ async function showFigurePreviewTooltip(targets, boxEl, { focus = false, pinned 
 }
 
 function hideFigurePreviewTooltip() {
+  figurePreviewClosedAt = Date.now()
   figurePreviewIsPinned = false
   if (figurePreviewHideTimer) { clearTimeout(figurePreviewHideTimer); figurePreviewHideTimer = null }
   if (figurePreviewTooltipEl) figurePreviewTooltipEl.classList.add('hidden')
@@ -14550,6 +14569,7 @@ let citationTooltipDocId = null
 let citationTooltipReferences = []
 let citationTooltipBoxEl = null
 let citationTooltipIsPinned = false
+let citationTooltipClosedAt = 0
 
 // Tauri 데스크탑 webview는 보안상 window.open()/target="_blank"로 외부
 // URL을 새 탭으로 열어주지 않는다(웹 브라우저와 달리 시스템 기본 브라우저를
@@ -14577,17 +14597,17 @@ function getOrCreateCitationTooltip() {
   el.setAttribute('role', 'dialog')
   el.setAttribute('aria-label', t('viewer:a11y.citationTrigger', { references: '' }))
   el.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+    <div class="citation-tooltip-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid var(--border,#e2e8f0)">
       <div class="citation-tooltip-header-title" style="font-size:11px;font-weight:600;color:var(--text-muted,#94a3b8)">참고문헌 (Citation)</div>
-      <button type="button" class="citation-tooltip-close-btn" style="border:none;background:transparent;cursor:pointer;font-size:13px;padding:2px 4px;color:var(--text-muted,#94a3b8);line-height:1" title="Close (Esc)" aria-label="Close">✕</button>
+      <button type="button" class="citation-tooltip-close-btn" style="border:none;background:var(--bg-hover, rgba(128,128,128,0.15));cursor:pointer;font-size:14px;padding:3px 8px;border-radius:4px;color:var(--text-primary);line-height:1;display:flex;align-items:center;justify-content:center;font-weight:bold" title="Close (Esc)" aria-label="Close">✕</button>
     </div>
     <div class="citation-tooltip-text"></div>
     <div class="citation-tooltip-result hidden"></div>
     <div class="citation-tooltip-scholar-results hidden"></div>
     <div class="citation-tooltip-actions">
-      <button type="button" class="citation-tooltip-action-btn citation-tooltip-resolve-btn">${icon('search', 12, 'style="vertical-align:-2px;margin-right:4px"')}원문 링크 찾기</button>
-      <button type="button" class="citation-tooltip-action-btn citation-tooltip-scholar-btn">${icon('externalLink', 12, 'style="vertical-align:-2px;margin-right:4px"')}Google Scholar 검색</button>
-      <button type="button" class="citation-tooltip-action-btn citation-tooltip-jump-btn" style="display:none">${icon('externalLink', 12, 'style="vertical-align:-2px;margin-right:4px"')}참고문헌 섹션으로 이동</button>
+      <button type="button" class="citation-tooltip-action-btn citation-tooltip-resolve-btn">${icon('search', 11, 'style="vertical-align:-1px;margin-right:3px"')}원문 링크 찾기</button>
+      <button type="button" class="citation-tooltip-action-btn citation-tooltip-scholar-btn">${icon('externalLink', 11, 'style="vertical-align:-1px;margin-right:3px"')}Google Scholar 검색</button>
+      <button type="button" class="citation-tooltip-action-btn citation-tooltip-jump-btn" style="display:none">${icon('externalLink', 11, 'style="vertical-align:-1px;margin-right:3px"')}참고문헌 섹션으로 이동</button>
     </div>
   `
   document.body.appendChild(el)
@@ -14678,6 +14698,7 @@ function showCitationTooltip(docId, refKeys, refMap, boxEl, { focus = false, pin
   // 텍스트 드래그 선택 중에 마우스가 마커 박스 위를 스쳐 지나가도(mouseenter)
   // 미리보기가 뜨지 않도록 막는다 - 다른 호버 오버레이들과 동일한 가드.
   if (state.isSelectionDragging) return
+  if (!pinned && Date.now() - citationTooltipClosedAt < 350) return
   if (citationTooltipHideTimer) { clearTimeout(citationTooltipHideTimer); citationTooltipHideTimer = null }
   if (citationTooltipBoxEl && citationTooltipBoxEl !== boxEl) citationTooltipBoxEl.setAttribute('aria-expanded', 'false')
   citationTooltipDocId = docId
@@ -14696,16 +14717,16 @@ function showCitationTooltip(docId, refKeys, refMap, boxEl, { focus = false, pin
   scholarResultsEl.innerHTML = ''
   const resolveBtn = tooltip.querySelector('.citation-tooltip-resolve-btn')
   resolveBtn.disabled = false
-  resolveBtn.innerHTML = `${icon('search', 12, 'style="vertical-align:-2px;margin-right:4px"')}원문 링크 찾기`
+  resolveBtn.innerHTML = `${icon('search', 11, 'style="vertical-align:-1px;margin-right:3px"')}원문 링크 찾기`
   const scholarBtn = tooltip.querySelector('.citation-tooltip-scholar-btn')
   const scholarLabel = refKeys.length > 1 ? 'Google Scholar 개별 검색' : 'Google Scholar 검색'
-  scholarBtn.innerHTML = `${icon('externalLink', 12, 'style="vertical-align:-2px;margin-right:4px"')}${scholarLabel}`
+  scholarBtn.innerHTML = `${icon('externalLink', 11, 'style="vertical-align:-1px;margin-right:3px"')}${scholarLabel}`
 
   const jumpBtn = tooltip.querySelector('.citation-tooltip-jump-btn')
   if (jumpBtn) {
     if (state.referencesHeaderPageNum) {
-      jumpBtn.style.display = 'flex'
-      jumpBtn.innerHTML = `${icon('externalLink', 12, 'style="vertical-align:-2px;margin-right:4px"')}참고문헌 목록(p.${state.referencesHeaderPageNum})으로 이동`
+      jumpBtn.style.display = 'inline-flex'
+      jumpBtn.innerHTML = `${icon('externalLink', 11, 'style="vertical-align:-1px;margin-right:3px"')}참고문헌 목록(p.${state.referencesHeaderPageNum})으로 이동`
       jumpBtn.onclick = (e) => {
         e.stopPropagation()
         scrollToPage(viewerScrollContainer, state.referencesHeaderPageNum)
@@ -14721,6 +14742,7 @@ function showCitationTooltip(docId, refKeys, refMap, boxEl, { focus = false, pin
 }
 
 function hideCitationTooltip() {
+  citationTooltipClosedAt = Date.now()
   citationTooltipIsPinned = false
   if (citationTooltipHideTimer) { clearTimeout(citationTooltipHideTimer); citationTooltipHideTimer = null }
   if (citationTooltipEl) citationTooltipEl.classList.add('hidden')
@@ -14746,7 +14768,7 @@ async function resolveCitationTooltip() {
     citationTooltipReferences.map(ref => ref.key).join('\u0000') === requestedRefs.map(ref => ref.key).join('\u0000')
 
   resolveBtn.disabled = true
-  resolveBtn.innerHTML = `${icon('refreshCw', 12, 'style="vertical-align:-2px;margin-right:4px"')}찾는 중...`
+  resolveBtn.innerHTML = `${icon('refreshCw', 11, 'style="vertical-align:-1px;margin-right:3px"')}찾는 중...`
 
   try {
     const results = await Promise.all(requestedRefs.map(async ref => {
@@ -14787,7 +14809,7 @@ async function resolveCitationTooltip() {
   } finally {
     if (!isCurrentRequest()) return
     resolveBtn.disabled = false
-    resolveBtn.innerHTML = `${icon('search', 12, 'style="vertical-align:-2px;margin-right:4px"')}다시 찾기`
+    resolveBtn.innerHTML = `${icon('search', 11, 'style="vertical-align:-1px;margin-right:3px"')}다시 찾기`
     positionCitationTooltip()
   }
 }
@@ -14806,13 +14828,40 @@ document.addEventListener('scroll', (event) => {
   }
 }, true)
 
-// 툴팁/인용 표기 바깥을 클릭하면 닫는다 - 호버가 없는 터치 기기에서 닫는
-// 유일한 방법이라 필요하다.
+// 툴팁/인용 표기/그림 표기 바깥을 클릭하면 닫는다
 document.addEventListener('click', (e) => {
-  if (!citationTooltipEl || citationTooltipEl.classList.contains('hidden')) return
-  if (citationTooltipEl.contains(e.target)) return
-  if (citationTooltipBoxEl && citationTooltipBoxEl.contains(e.target)) return
-  hideCitationTooltip()
+  if (figurePreviewTooltipEl && !figurePreviewTooltipEl.classList.contains('hidden')) {
+    if (!figurePreviewTooltipEl.contains(e.target) && (!figurePreviewBoxEl || !figurePreviewBoxEl.contains(e.target))) {
+      hideFigurePreviewTooltip()
+    }
+  }
+  if (citationTooltipEl && !citationTooltipEl.classList.contains('hidden')) {
+    if (!citationTooltipEl.contains(e.target) && (!citationTooltipBoxEl || !citationTooltipBoxEl.contains(e.target))) {
+      hideCitationTooltip()
+    }
+  }
+}, true)
+
+// 전역 Escape 키 리스너: 포커스 위치에 관계없이 열려 있는 툴팁을 닫고 트리거로 포커스 복원
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return
+  let handled = false
+  if (figurePreviewTooltipEl && !figurePreviewTooltipEl.classList.contains('hidden')) {
+    const trigger = figurePreviewBoxEl
+    hideFigurePreviewTooltip()
+    trigger?.focus()
+    handled = true
+  }
+  if (citationTooltipEl && !citationTooltipEl.classList.contains('hidden')) {
+    const trigger = citationTooltipBoxEl
+    hideCitationTooltip()
+    trigger?.focus()
+    handled = true
+  }
+  if (handled) {
+    e.preventDefault()
+    e.stopPropagation()
+  }
 })
 
 // ── AI Chat Sidebar ──────────────────────────────
@@ -17939,13 +17988,17 @@ if (viewerScrollContainer) {
         }
       }
 
-      // ── trans-interactive-ref 클릭 (도표 / 참고문헌 Zotero 스타일 팝오버) ──
+      // ── trans-interactive-ref 클릭 (도표 / 참고문헌 Zotero 스타일 팝오버: 재클릭 시 닫기 토글) ──
       const interactiveRef = e.target.closest('.trans-interactive-ref');
       if (interactiveRef) {
         e.preventDefault();
         e.stopPropagation();
         const refType = interactiveRef.dataset.refType;
         if (refType === 'figure') {
+          if (figurePreviewTooltipEl && !figurePreviewTooltipEl.classList.contains('hidden') && figurePreviewBoxEl === interactiveRef) {
+            hideFigurePreviewTooltip();
+            return;
+          }
           const kind = interactiveRef.dataset.kind;
           const num = interactiveRef.dataset.num;
           const images = state.documentImages || [];
@@ -17954,6 +18007,10 @@ if (viewerScrollContainer) {
             showFigurePreviewTooltip([target], interactiveRef, { focus: true, pinned: true });
           }
         } else if (refType === 'citation') {
+          if (citationTooltipEl && !citationTooltipEl.classList.contains('hidden') && citationTooltipBoxEl === interactiveRef) {
+            hideCitationTooltip();
+            return;
+          }
           const rawKey = interactiveRef.dataset.refKey;
           const keys = rawKey.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean);
           showCitationTooltip(state.currentDocId, keys, state.referenceMap || {}, interactiveRef, { focus: true, pinned: true });

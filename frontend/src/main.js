@@ -2018,6 +2018,7 @@ function renderTransContent(pageNum, text, cached = false) {
 
   // 문장 1대1 매칭을 위한 세그멘테이션 추가
   segmentElementIntoSentences(el, pageNum, 'trans-sentence')
+  enrichTranslationInteractiveReferences(el, pageNum)
 
   // PDF 텍스트 레이어가 이미 로드되어 있는 경우, 최신 문장 정렬 매핑을 바탕으로 재세그멘테이션 실행
   const textLayerDiv = document.querySelector(`.pdf-page-wrapper[data-page="${pageNum}"] .textLayer`)
@@ -2036,6 +2037,83 @@ function renderTransContent(pageNum, text, cached = false) {
   }
 
   if (statusEl) { statusEl.textContent = '✓ 완료'; statusEl.classList.add('done') }
+}
+
+// ── 번역 패널 내 Zotero 스타일 인터랙티브 인용 및 도표 참조 자동 활성화 ──
+function enrichTranslationInteractiveReferences(container, pageNum) {
+  if (!container) return
+  const sentences = container.querySelectorAll('.trans-sentence')
+  if (!sentences.length) return
+
+  // 결합 매칭 정규식 (그림/표 또는 번호/저자-연도 인용구)
+  const COMBINED_RE = /(\[?(?:그림|도|표|Figure|Fig\.|Table)\s*([0-9IVXLCDM]+|[A-Z])\]?)|(\[(\d+(?:\s*[-–—,]\s*\d+)*)\]|\(([A-Z][a-zA-Z\s.,&]+?\b\d{4}[a-z]?)\))/gi
+
+  sentences.forEach(sentEl => {
+    const walker = document.createTreeWalker(sentEl, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT
+        if (node.parentElement?.closest('.trans-interactive-ref, .katex-display-wrap, .katex-inline-wrap, .math-pending')) {
+          return NodeFilter.FILTER_REJECT
+        }
+        return NodeFilter.FILTER_ACCEPT
+      }
+    })
+
+    const textNodes = []
+    let currentNode
+    while ((currentNode = walker.nextNode())) {
+      textNodes.push(currentNode)
+    }
+
+    textNodes.forEach(node => {
+      const text = node.nodeValue
+      COMBINED_RE.lastIndex = 0
+      if (!COMBINED_RE.test(text)) return
+      COMBINED_RE.lastIndex = 0
+
+      let match
+      let lastIdx = 0
+      const frag = document.createDocumentFragment()
+      let hasMatch = false
+
+      while ((match = COMBINED_RE.exec(text)) !== null) {
+        hasMatch = true
+        if (match.index > lastIdx) {
+          frag.appendChild(document.createTextNode(text.slice(lastIdx, match.index)))
+        }
+        const fullMatch = match[0]
+        const figTableNum = match[2]
+        const citBracketNum = match[4]
+        const citAuthorYear = match[5]
+
+        const span = document.createElement('span')
+        span.className = 'trans-interactive-ref'
+        span.textContent = fullMatch
+
+        if (figTableNum) {
+          span.dataset.refType = 'figure'
+          const lower = fullMatch.toLowerCase()
+          const kind = (/[\uD45C]|table/i.test(lower)) ? 'Table' : 'Figure'
+          span.dataset.kind = kind
+          span.dataset.num = figTableNum
+          span.title = `${kind} ${figTableNum} 미리보기`
+        } else if (citBracketNum || citAuthorYear) {
+          span.dataset.refType = 'citation'
+          span.dataset.refKey = citBracketNum || citAuthorYear
+          span.title = `참고문헌 [${citBracketNum || citAuthorYear}]`
+        }
+        frag.appendChild(span)
+        lastIdx = COMBINED_RE.lastIndex
+      }
+
+      if (hasMatch) {
+        if (lastIdx < text.length) {
+          frag.appendChild(document.createTextNode(text.slice(lastIdx)))
+        }
+        node.parentNode.replaceChild(frag, node)
+      }
+    })
+  })
 }
 
 // ── 페이지 표시 업데이트 ──────────────────────────
@@ -10371,6 +10449,9 @@ async function loadDocumentReferences(docId) {
   try {
     const refRes = await fetchLibraryReferences(docId)
     state.referenceMap = refRes.references || {}
+    if (refRes.start_page) {
+      state.referencesHeaderPageNum = refRes.start_page
+    }
     state.citationStyle = detectCitationStyle(state.referenceMap)
 
     // 이미 렌더링되어 있는 페이지들의 인용 오버레이 갱신
@@ -13424,6 +13505,7 @@ window.onTextLayerRendered = (textLayerDiv, pageNum) => {
     const transTextEl = transBlock.querySelector('.trans-text')
     if (transTextEl && !transTextEl.dataset.segmented) {
       segmentElementIntoSentences(transTextEl, pageNum, 'trans-sentence')
+      enrichTranslationInteractiveReferences(transTextEl, pageNum)
     }
   }
 
@@ -13913,7 +13995,8 @@ function renderCitationOverlayLayer(textLayerDiv, pageNum) {
   // 같은 범위 인용이 여러 참고문헌을 한 번에 가리키는 경우를 위함).
   const addCitationBox = (charStart, charEnd, refKeys) => {
     const validKeys = refKeys.filter(k => refMap[k])
-    if (validKeys.length === 0) return
+    const keysToUse = validKeys.length > 0 ? validKeys : refKeys
+    if (keysToUse.length === 0) return
     const rects = getSentenceRects({ charStart, charEnd }, vtm, textLayerDiv)
     rects.forEach(r => {
       const box = document.createElement('div')
@@ -13922,32 +14005,28 @@ function renderCitationOverlayLayer(textLayerDiv, pageNum) {
       box.style.top    = `${r.top}px`
       box.style.width  = `${r.width}px`
       box.style.height = `${r.height}px`
-      box.dataset.refNum = validKeys.join(',')
+      box.dataset.refNum = keysToUse.join(',')
       box.tabIndex = 0
       box.setAttribute('role', 'button')
       box.setAttribute('aria-haspopup', 'dialog')
       box.setAttribute('aria-expanded', 'false')
-      box.setAttribute('aria-label', t('viewer:a11y.citationTrigger', { references: validKeys.join(', ') }))
-      box.addEventListener('mouseenter', () => showCitationTooltip(docId, validKeys, refMap, box))
+      box.setAttribute('aria-label', t('viewer:a11y.citationTrigger', { references: keysToUse.join(', ') }))
+      box.addEventListener('mouseenter', () => showCitationTooltip(docId, keysToUse, refMap, box))
       box.addEventListener('mouseleave', scheduleCitationTooltipHide)
       box.addEventListener('keydown', (event) => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault(); event.stopPropagation()
-          showCitationTooltip(docId, validKeys, refMap, box, { focus: true })
+          showCitationTooltip(docId, keysToUse, refMap, box, { focus: true, pinned: true })
         } else if (event.key === 'Escape') {
           event.preventDefault(); hideCitationTooltip(); box.focus()
         }
       })
-      // 클릭도 항상 툴팁을 띄운다(호버가 없는 터치 기기 대응). 실제 마우스
-      // 클릭은 브라우저가 클릭 직전에 mouseenter를 먼저 쏘므로, 여기서 굳이
-      // "이미 열려 있으면 닫기" 토글을 넣으면 방금 호버가 연 툴팁을 클릭이
-      // 곧바로 다시 닫아버리는 문제가 있어 단순히 show만 호출한다. 닫기는
-      // 바깥 클릭/스크롤/mouseleave로 처리한다.
+      // 클릭 시 팝업을 고정(pinned: true)하여 닫히지 않고 Zotero처럼 유지
       box.addEventListener('click', (e) => {
         e.preventDefault()
         e.stopPropagation()
         globalAnalyticsTracker.trackInteraction('citationClick', pageNum)
-        showCitationTooltip(docId, validKeys, refMap, box)
+        showCitationTooltip(docId, keysToUse, refMap, box, { focus: true, pinned: true })
       })
       overlay.appendChild(box)
     })
@@ -14208,14 +14287,15 @@ function renderFigureRefOverlayLayer(textLayerDiv, pageNum) {
       // 클릭하면 해당 그림/표/수식이 실제로 있는 페이지로 이동한다. 여러 개를
       // 한 번에 가리키는 표기("Figures 1 and 2")는 첫 번째 대상 기준으로
       // 이동하고, 나머지는 미리보기 툴팁 안의 각 항목을 클릭해 개별 이동한다.
+      // Zotero 스타일: 클릭 시 독서 흐름을 깨며 다른 페이지로 이동하지 않고,
+      // 그 자리에 고해상도 그림/표 팝업을 고정(pinned: true)하여 표시
       box.addEventListener('click', (e) => {
         e.preventDefault()
         e.stopPropagation()
         window.getSelection().removeAllRanges()
         const interactionType = kind === 'Table' ? 'tableClick' : (kind === 'Equation' ? 'equationClick' : 'figureClick')
         globalAnalyticsTracker.trackInteraction(interactionType, pageNum)
-        hideFigurePreviewTooltip()
-        scrollToPage(viewerScrollContainer, targets[0].page)
+        showFigurePreviewTooltip(targets, box, { focus: true, pinned: true })
       })
       overlay.appendChild(box)
     })
@@ -14250,6 +14330,7 @@ function getOrCreateFigurePreviewTooltip() {
   el.setAttribute('role', 'dialog')
   el.setAttribute('aria-label', t('viewer:a11y.figureTrigger', { label: '' }))
   el.innerHTML = `
+    <button type="button" class="figure-preview-close-btn" aria-label="닫기" style="position:absolute;top:6px;right:6px;z-index:10;background:none;border:none;font-size:14px;color:var(--text-muted);cursor:pointer;padding:2px 6px;border-radius:4px">✕</button>
     <div class="figure-preview-tooltip-items"></div>
     <button type="button" class="figure-preview-tooltip-resize-handle handle-nw" data-corner="nw" title="${t('viewer:a11y.figureResize')}" aria-label="${t('viewer:a11y.figureResize')}"></button>
     <button type="button" class="figure-preview-tooltip-resize-handle handle-ne" data-corner="ne" title="${t('viewer:a11y.figureResize')}" aria-label="${t('viewer:a11y.figureResize')}"></button>
@@ -14259,15 +14340,16 @@ function getOrCreateFigurePreviewTooltip() {
   document.body.appendChild(el)
 
   try {
-    // 너비만 기억해둔다 - 높이까지 고정해서 복원하면, 이전에 열었던 그림/표와
-    // 비율이 다른 대상을 열었을 때 옛 높이가 그대로 남아 이미지+캡션 아래로
-    // 빈 여백이 생긴다. 높이는 항상 CSS(height: auto)에 맡겨 그 순간의
-    // 콘텐츠 크기에 맞게 정해지도록 둔다.
     const saved = JSON.parse(localStorage.getItem(_FIGURE_PREVIEW_SIZE_KEY) || 'null')
     if (saved && saved.w >= _FIGURE_PREVIEW_MIN_WIDTH) {
       el.style.width = `${saved.w}px`
     }
   } catch {}
+
+  el.querySelector('.figure-preview-close-btn').addEventListener('click', (e) => {
+    e.stopPropagation()
+    hideFigurePreviewTooltip()
+  })
 
   el.addEventListener('mouseenter', () => {
     if (figurePreviewHideTimer) { clearTimeout(figurePreviewHideTimer); figurePreviewHideTimer = null }
@@ -14280,16 +14362,17 @@ function getOrCreateFigurePreviewTooltip() {
     hideFigurePreviewTooltip()
     trigger?.focus()
   })
-  // 여러 대상이 한 툴팁에 쌓여 있을 때, 특정 항목을 클릭하면 그 항목의
-  // 페이지로 이동한다 (내용은 매번 innerHTML로 다시 그려지므로 이벤트
-  // 위임으로 한 번만 등록해둔다).
+  // 전용 '이 페이지로 이동' 버튼을 눌렀을 때만 페이지 이동을 수행 (본문 클릭 시 화면 튕김 방지)
   el.querySelector('.figure-preview-tooltip-items').addEventListener('click', (e) => {
-    const itemEl = e.target.closest('.figure-preview-tooltip-item')
-    if (!itemEl) return
-    const target = figurePreviewCurrentTargets[parseInt(itemEl.dataset.idx, 10)]
-    if (!target) return
-    hideFigurePreviewTooltip()
-    scrollToPage(viewerScrollContainer, target.page)
+    const jumpBtn = e.target.closest('.figure-preview-jump-btn')
+    if (jumpBtn) {
+      e.stopPropagation()
+      const targetPage = parseInt(jumpBtn.dataset.page, 10)
+      if (!isNaN(targetPage)) {
+        hideFigurePreviewTooltip()
+        scrollToPage(viewerScrollContainer, targetPage)
+      }
+    }
   })
 
   el.querySelectorAll('.figure-preview-tooltip-resize-handle').forEach((handle) => {
@@ -14302,43 +14385,23 @@ function getOrCreateFigurePreviewTooltip() {
       const startY = e.clientY
       const startWidth = el.offsetWidth
       const startHeight = el.offsetHeight
-      const rect = el.getBoundingClientRect()
-      const startLeft = rect.left
-      const startTop = rect.top
-
-      const loadedImgs = Array.from(el.querySelectorAll('.figure-preview-tooltip-img:not(.hidden)'))
-      const startImagesHeight = loadedImgs.reduce((sum, img) => sum + img.getBoundingClientRect().height, 0)
-      const chromeHeight = Math.max(0, startHeight - startImagesHeight)
-
-      const maxAvailableW = corner.includes('w')
-        ? Math.min(window.innerWidth * 0.9, 900, startLeft + startWidth - 8)
-        : Math.min(window.innerWidth * 0.9, 900, window.innerWidth - startLeft - 8)
-      const maxAvailableH = corner.includes('n')
-        ? Math.min(window.innerHeight * 0.9, 900, startTop + startHeight - 8)
-        : Math.min(window.innerHeight * 0.9, 900, window.innerHeight - startTop - 8)
-
-      const maxWidth = Math.max(_FIGURE_PREVIEW_MIN_WIDTH, maxAvailableW)
-      const maxHeight = Math.max(_FIGURE_PREVIEW_MIN_HEIGHT, maxAvailableH)
+      const startLeft = el.offsetLeft
+      const startTop = el.offsetTop
 
       el.classList.add('resizing')
       figurePreviewIsResizing = true
-      if (figurePreviewHideTimer) { clearTimeout(figurePreviewHideTimer); figurePreviewHideTimer = null }
 
       const onMove = (moveEvent) => {
-        const rawDx = moveEvent.clientX - startX
-        const rawDy = moveEvent.clientY - startY
-        const deltaX = corner.includes('e') ? rawDx : -rawDx
-        const deltaY = corner.includes('s') ? rawDy : -rawDy
+        let dx = moveEvent.clientX - startX
+        let dy = moveEvent.clientY - startY
 
-        const aspect = startWidth / Math.max(1, startHeight)
-        let effectiveDelta = deltaX
-        if (Math.abs(deltaY) > Math.abs(deltaX)) {
-          effectiveDelta = deltaY * aspect
-        }
+        if (corner.includes('w')) dx = -dx
+        if (corner.includes('n')) dy = -dy
 
-        const newWidth = Math.max(_FIGURE_PREVIEW_MIN_WIDTH, Math.min(maxWidth, startWidth + effectiveDelta))
-        const scale = startWidth > 0 ? newWidth / startWidth : 1
-        const newHeight = Math.max(_FIGURE_PREVIEW_MIN_HEIGHT, Math.min(maxHeight, chromeHeight + startImagesHeight * scale))
+        const maxWidth = Math.min(window.innerWidth * 0.9, 900)
+        const maxHeight = Math.min(window.innerHeight * 0.9, 900)
+        const newWidth = Math.round(Math.max(_FIGURE_PREVIEW_MIN_WIDTH, Math.min(maxWidth, startWidth + dx)))
+        const newHeight = Math.round(Math.max(_FIGURE_PREVIEW_MIN_HEIGHT, Math.min(maxHeight, startHeight + dy)))
 
         el.style.width = `${newWidth}px`
         el.style.height = `${newHeight}px`
@@ -14358,7 +14421,6 @@ function getOrCreateFigurePreviewTooltip() {
         document.removeEventListener('mouseup', onUp)
         el.classList.remove('resizing')
         figurePreviewIsResizing = false
-        el.style.height = ''
         localStorage.setItem(_FIGURE_PREVIEW_SIZE_KEY, JSON.stringify({ w: el.offsetWidth }))
       }
 
@@ -14393,9 +14455,6 @@ function getOrCreateFigurePreviewTooltip() {
 
 function positionFigurePreviewTooltip() {
   if (!figurePreviewTooltipEl || !figurePreviewBoxEl) return
-  // 사용자가 리사이즈 핸들을 드래그하는 도중에는 위치를 다시 계산하지 않는다 -
-  // 그 사이 이미지 로딩이 끝나 재배치가 걸리면(아래 showFigurePreviewTooltip의
-  // imgEl.onload) 커서 아래에서 박스가 튀어 리사이즈가 끊기는 문제가 있었다.
   if (figurePreviewTooltipEl.classList.contains('resizing')) return
   const rect = figurePreviewBoxEl.getBoundingClientRect()
   const tw = figurePreviewTooltipEl.offsetWidth || 280
@@ -14408,15 +14467,13 @@ function positionFigurePreviewTooltip() {
   figurePreviewTooltipEl.style.top = `${top}px`
 }
 
-// targets: documentImages 항목 배열(1개 이상 - "Figures 1 and 2"처럼 여러 개를
-// 한 번에 가리키는 표기는 각각을 세로로 쌓아 보여준다)
-async function showFigurePreviewTooltip(targets, boxEl, { focus = false } = {}) {
-  // 텍스트 드래그 선택 중에 마우스가 마커 박스 위를 스쳐 지나가도(mouseenter)
-  // 미리보기가 뜨지 않도록 막는다 - 다른 호버 오버레이들과 동일한 가드.
+// targets: documentImages 항목 배열(1개 이상)
+async function showFigurePreviewTooltip(targets, boxEl, { focus = false, pinned = false } = {}) {
   if (state.isSelectionDragging) return
   if (figurePreviewHideTimer) { clearTimeout(figurePreviewHideTimer); figurePreviewHideTimer = null }
   if (figurePreviewBoxEl && figurePreviewBoxEl !== boxEl) figurePreviewBoxEl.setAttribute('aria-expanded', 'false')
   figurePreviewBoxEl = boxEl
+  if (pinned) figurePreviewIsPinned = true
   boxEl?.setAttribute('aria-expanded', 'true')
   figurePreviewCurrentTargets = targets
   const requestId = ++figurePreviewRequestId
@@ -14424,17 +14481,22 @@ async function showFigurePreviewTooltip(targets, boxEl, { focus = false } = {}) 
   const tooltip = getOrCreateFigurePreviewTooltip()
   const itemsEl = tooltip.querySelector('.figure-preview-tooltip-items')
   itemsEl.innerHTML = targets.map((target, idx) => `
-    <button type="button" class="figure-preview-tooltip-item" data-idx="${idx}" aria-label="${escapeHtml(t('viewer:a11y.figureItem', { label: target.label, page: target.page }))}">
-      <div class="figure-preview-tooltip-label">${escapeHtml(target.label)} · p.${target.page}</div>
+    <div class="figure-preview-tooltip-item" data-idx="${idx}" aria-label="${escapeHtml(t('viewer:a11y.figureItem', { label: target.label, page: target.page }))}">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <div class="figure-preview-tooltip-label" style="margin-bottom:0">${escapeHtml(target.label)} · p.${target.page}</div>
+        <button type="button" class="figure-preview-jump-btn" data-page="${target.page}" style="padding:2px 8px;font-size:11px;border-radius:4px;border:1px solid var(--border);background:var(--bg-hover,#f1f5f9);cursor:pointer">
+          ${icon('externalLink', 11, 'style="vertical-align:-1px;margin-right:2px"')}이 페이지로 이동
+        </button>
+      </div>
       <div class="figure-preview-tooltip-loading">${icon('refreshCw', 14, 'style="vertical-align:-2px;margin-right:4px"')}불러오는 중...</div>
       <img class="figure-preview-tooltip-img hidden" alt="" />
       ${target.caption ? `<div class="figure-preview-tooltip-caption">${renderBoldText(target.caption)}</div>` : ''}
-    </button>
+    </div>
   `).join('')
 
   tooltip.classList.remove('hidden')
   positionFigurePreviewTooltip()
-  if (focus) window.requestAnimationFrame(() => itemsEl.querySelector('.figure-preview-tooltip-item')?.focus())
+  if (focus) window.requestAnimationFrame(() => itemsEl.querySelector('.figure-preview-jump-btn')?.focus())
 
   targets.forEach(async (t, idx) => {
     const itemEl = itemsEl.querySelector(`.figure-preview-tooltip-item[data-idx="${idx}"]`)
@@ -14443,7 +14505,6 @@ async function showFigurePreviewTooltip(targets, boxEl, { focus = false } = {}) 
     const imgEl = itemEl.querySelector('.figure-preview-tooltip-img')
     try {
       const dataUrl = await renderFigureCrop(t.page, t)
-      // 그 사이 다른 표기로 호버가 옮겨갔거나 툴팁이 닫혔으면 결과를 버린다
       if (requestId !== figurePreviewRequestId || figurePreviewTooltipEl.classList.contains('hidden')) return
       if (!dataUrl) throw new Error('empty crop')
       imgEl.onload = () => positionFigurePreviewTooltip()
@@ -14459,6 +14520,7 @@ async function showFigurePreviewTooltip(targets, boxEl, { focus = false } = {}) 
 }
 
 function hideFigurePreviewTooltip() {
+  figurePreviewIsPinned = false
   if (figurePreviewHideTimer) { clearTimeout(figurePreviewHideTimer); figurePreviewHideTimer = null }
   if (figurePreviewTooltipEl) figurePreviewTooltipEl.classList.add('hidden')
   figurePreviewBoxEl?.setAttribute('aria-expanded', 'false')
@@ -14466,13 +14528,19 @@ function hideFigurePreviewTooltip() {
 }
 
 function scheduleFigurePreviewTooltipHide() {
-  if (figurePreviewIsResizing) return
+  if (figurePreviewIsResizing || figurePreviewIsPinned) return
   if (figurePreviewHideTimer) clearTimeout(figurePreviewHideTimer)
   figurePreviewHideTimer = setTimeout(hideFigurePreviewTooltip, 220)
 }
 
 document.addEventListener('scroll', () => {
-  if (figurePreviewTooltipEl && !figurePreviewTooltipEl.classList.contains('hidden')) hideFigurePreviewTooltip()
+  if (figurePreviewTooltipEl && !figurePreviewTooltipEl.classList.contains('hidden')) {
+    if (figurePreviewIsPinned) {
+      positionFigurePreviewTooltip()
+    } else {
+      hideFigurePreviewTooltip()
+    }
+  }
 }, true)
 
 // ── 인용 표기 호버 툴팁: 참고문헌 원문 + 외부 링크 찾기 + Google Scholar 검색 ──
@@ -14481,6 +14549,7 @@ let citationTooltipHideTimer = null
 let citationTooltipDocId = null
 let citationTooltipReferences = []
 let citationTooltipBoxEl = null
+let citationTooltipIsPinned = false
 
 // Tauri 데스크탑 webview는 보안상 window.open()/target="_blank"로 외부
 // URL을 새 탭으로 열어주지 않는다(웹 브라우저와 달리 시스템 기본 브라우저를
@@ -14508,15 +14577,25 @@ function getOrCreateCitationTooltip() {
   el.setAttribute('role', 'dialog')
   el.setAttribute('aria-label', t('viewer:a11y.citationTrigger', { references: '' }))
   el.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <div class="citation-tooltip-header-title" style="font-size:11px;font-weight:600;color:var(--text-muted,#94a3b8)">참고문헌 (Citation)</div>
+      <button type="button" class="citation-tooltip-close-btn" style="border:none;background:transparent;cursor:pointer;font-size:13px;padding:2px 4px;color:var(--text-muted,#94a3b8);line-height:1" title="Close (Esc)" aria-label="Close">✕</button>
+    </div>
     <div class="citation-tooltip-text"></div>
     <div class="citation-tooltip-result hidden"></div>
     <div class="citation-tooltip-scholar-results hidden"></div>
     <div class="citation-tooltip-actions">
       <button type="button" class="citation-tooltip-action-btn citation-tooltip-resolve-btn">${icon('search', 12, 'style="vertical-align:-2px;margin-right:4px"')}원문 링크 찾기</button>
       <button type="button" class="citation-tooltip-action-btn citation-tooltip-scholar-btn">${icon('externalLink', 12, 'style="vertical-align:-2px;margin-right:4px"')}Google Scholar 검색</button>
+      <button type="button" class="citation-tooltip-action-btn citation-tooltip-jump-btn" style="display:none">${icon('externalLink', 12, 'style="vertical-align:-2px;margin-right:4px"')}참고문헌 섹션으로 이동</button>
     </div>
   `
   document.body.appendChild(el)
+
+  el.querySelector('.citation-tooltip-close-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation()
+    hideCitationTooltip()
+  })
 
   el.addEventListener('mouseenter', () => {
     if (citationTooltipHideTimer) { clearTimeout(citationTooltipHideTimer); citationTooltipHideTimer = null }
@@ -14536,17 +14615,17 @@ function getOrCreateCitationTooltip() {
   el.querySelector('.citation-tooltip-scholar-btn').addEventListener('click', (e) => {
     e.stopPropagation()
     const searchableRefs = citationTooltipReferences
-      .map(ref => ({ ...ref, title: extractCitationTitle(ref.text) }))
+      .map(ref => ({ ...ref, title: extractCitationTitle(ref.text) || ref.key }))
       .filter(ref => ref.title)
     if (searchableRefs.length <= 1) {
-      if (searchableRefs.length) openExternalUrl(buildScholarSearchUrl(searchableRefs[0].text))
+      if (searchableRefs.length) openExternalUrl(buildScholarSearchUrl(searchableRefs[0].text || searchableRefs[0].key))
       return
     }
 
     const scholarResultsEl = el.querySelector('.citation-tooltip-scholar-results')
     scholarResultsEl.className = 'citation-tooltip-scholar-results'
     scholarResultsEl.innerHTML = searchableRefs.map(ref =>
-      `<div class="citation-tooltip-result-item"><span class="citation-tooltip-multi-key">[${escapeHtml(ref.key)}]</span><a href="${escapeHtml(buildScholarSearchUrl(ref.text))}" target="_blank" rel="noopener">${icon('externalLink', 12, 'style="vertical-align:-2px;margin-right:4px;flex-shrink:0"')}<span>${escapeHtml(ref.title)}</span></a></div>`
+      `<div class="citation-tooltip-result-item"><span class="citation-tooltip-multi-key">[${escapeHtml(ref.key)}]</span><a href="${escapeHtml(buildScholarSearchUrl(ref.text || ref.key))}" target="_blank" rel="noopener">${icon('externalLink', 12, 'style="vertical-align:-2px;margin-right:4px;flex-shrink:0"')}<span>${escapeHtml(ref.title)}</span></a></div>`
     ).join('')
     positionCitationTooltip()
   })
@@ -14582,13 +14661,20 @@ function positionCitationTooltip() {
 // refKeys가 여러 개면(예: "[66-69]" 범위 인용, "(A, 2020; B, 2019)" 나열)
 // 각 항목을 "[키] 원문" 형태로 구분해 전부 보여준다.
 function buildCitationTooltipHtml(refKeys, refMap) {
-  if (refKeys.length === 1) return renderBoldText(refMap[refKeys[0]] || '')
+  if (refKeys.length === 1) {
+    const text = refMap[refKeys[0]]
+    if (text) return renderBoldText(text)
+    return `<div class="citation-tooltip-unmapped"><span class="citation-tooltip-multi-key">[${escapeHtml(refKeys[0])}]</span> <span style="color:var(--text-muted,#94a3b8)">(참고문헌 세부정보를 검색하거나 아래 Google Scholar 검색을 이용하세요)</span></div>`
+  }
   return refKeys
-    .map(k => `<div class="citation-tooltip-multi-item"><span class="citation-tooltip-multi-key">[${escapeHtml(k)}]</span> ${renderBoldText(refMap[k] || '')}</div>`)
+    .map(k => {
+      const text = refMap[k]
+      return `<div class="citation-tooltip-multi-item"><span class="citation-tooltip-multi-key">[${escapeHtml(k)}]</span> ${text ? renderBoldText(text) : '<span style="color:var(--text-muted,#94a3b8)">(원문 정보 없음)</span>'}</div>`
+    })
     .join('\n')
 }
 
-function showCitationTooltip(docId, refKeys, refMap, boxEl, { focus = false } = {}) {
+function showCitationTooltip(docId, refKeys, refMap, boxEl, { focus = false, pinned = false } = {}) {
   // 텍스트 드래그 선택 중에 마우스가 마커 박스 위를 스쳐 지나가도(mouseenter)
   // 미리보기가 뜨지 않도록 막는다 - 다른 호버 오버레이들과 동일한 가드.
   if (state.isSelectionDragging) return
@@ -14597,6 +14683,7 @@ function showCitationTooltip(docId, refKeys, refMap, boxEl, { focus = false } = 
   citationTooltipDocId = docId
   citationTooltipReferences = refKeys.map(key => ({ key, text: refMap[key] || '' }))
   citationTooltipBoxEl = boxEl
+  if (pinned) citationTooltipIsPinned = true
   boxEl?.setAttribute('aria-expanded', 'true')
 
   const tooltip = getOrCreateCitationTooltip()
@@ -14614,12 +14701,27 @@ function showCitationTooltip(docId, refKeys, refMap, boxEl, { focus = false } = 
   const scholarLabel = refKeys.length > 1 ? 'Google Scholar 개별 검색' : 'Google Scholar 검색'
   scholarBtn.innerHTML = `${icon('externalLink', 12, 'style="vertical-align:-2px;margin-right:4px"')}${scholarLabel}`
 
+  const jumpBtn = tooltip.querySelector('.citation-tooltip-jump-btn')
+  if (jumpBtn) {
+    if (state.referencesHeaderPageNum) {
+      jumpBtn.style.display = 'flex'
+      jumpBtn.innerHTML = `${icon('externalLink', 12, 'style="vertical-align:-2px;margin-right:4px"')}참고문헌 목록(p.${state.referencesHeaderPageNum})으로 이동`
+      jumpBtn.onclick = (e) => {
+        e.stopPropagation()
+        scrollToPage(viewerScrollContainer, state.referencesHeaderPageNum)
+      }
+    } else {
+      jumpBtn.style.display = 'none'
+    }
+  }
+
   tooltip.classList.remove('hidden')
   positionCitationTooltip()
   if (focus) window.requestAnimationFrame(() => tooltip.querySelector('button:not([disabled]), a[href]')?.focus())
 }
 
 function hideCitationTooltip() {
+  citationTooltipIsPinned = false
   if (citationTooltipHideTimer) { clearTimeout(citationTooltipHideTimer); citationTooltipHideTimer = null }
   if (citationTooltipEl) citationTooltipEl.classList.add('hidden')
   citationTooltipBoxEl?.setAttribute('aria-expanded', 'false')
@@ -14627,6 +14729,7 @@ function hideCitationTooltip() {
 }
 
 function scheduleCitationTooltipHide() {
+  if (citationTooltipIsPinned) return
   if (citationTooltipHideTimer) clearTimeout(citationTooltipHideTimer)
   citationTooltipHideTimer = setTimeout(hideCitationTooltip, 220)
 }
@@ -14689,12 +14792,18 @@ async function resolveCitationTooltip() {
   }
 }
 
-// PDF 스크롤 중에는 인용 박스와 툴팁의 상대 위치가 계속 바뀌므로, 스크롤이
-// 시작되면 곧바로 닫는다(매 스크롤 이벤트마다 재계산하는 것보다 훨씬 가볍다).
+// PDF 스크롤 중에는 인용 박스와 툴팁의 상대 위치가 계속 바뀌므로,
+// 고정(pinned) 모드가 아닐 때만 닫고 고정 모드일 때는 위치를 재계산한다.
 document.addEventListener('scroll', (event) => {
   // 참고문헌이 많아 툴팁 자체를 스크롤한 경우에는 열린 상태를 유지한다.
   if (citationTooltipEl && event.target && citationTooltipEl.contains(event.target)) return
-  if (citationTooltipEl && !citationTooltipEl.classList.contains('hidden')) hideCitationTooltip()
+  if (citationTooltipEl && !citationTooltipEl.classList.contains('hidden')) {
+    if (citationTooltipIsPinned) {
+      positionCitationTooltip()
+    } else {
+      hideCitationTooltip()
+    }
+  }
 }, true)
 
 // 툴팁/인용 표기 바깥을 클릭하면 닫는다 - 호버가 없는 터치 기기에서 닫는
@@ -17617,10 +17726,28 @@ if (viewerScrollContainer) {
     }
   });
 
-  // mouseover: trans-sentence 호버 처리 (기존 방식 유지)
+  // mouseover: trans-sentence 및 trans-interactive-ref 호버 처리
   viewerScrollContainer.addEventListener('mouseover', (e) => {
     if (state.isSelectionDragging) return;
     try {
+      const interactiveRef = e.target.closest('.trans-interactive-ref');
+      if (interactiveRef) {
+        const refType = interactiveRef.dataset.refType;
+        if (refType === 'figure') {
+          const kind = interactiveRef.dataset.kind;
+          const num = interactiveRef.dataset.num;
+          const images = state.documentImages || [];
+          const target = images.find(img => img.label === `${kind} ${num}`);
+          if (target) {
+            showFigurePreviewTooltip([target], interactiveRef);
+          }
+        } else if (refType === 'citation') {
+          const rawKey = interactiveRef.dataset.refKey;
+          const keys = rawKey.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean);
+          showCitationTooltip(state.currentDocId, keys, state.referenceMap || {}, interactiveRef);
+        }
+      }
+
       const annSpan = e.target.closest('.pdf-annotation-highlight, .pdf-annotation-underline');
       if (annSpan) showAnnHoverTooltipForSpan(annSpan);
 
@@ -17673,6 +17800,12 @@ if (viewerScrollContainer) {
   viewerScrollContainer.addEventListener('mouseout', (e) => {
     if (state.isSelectionDragging) return;
     try {
+      const interactiveRef = e.target.closest('.trans-interactive-ref');
+      if (interactiveRef && !e.relatedTarget?.closest('.trans-interactive-ref')) {
+        scheduleFigurePreviewTooltipHide();
+        scheduleCitationTooltipHide();
+      }
+
       const annSpan = e.target.closest('.pdf-annotation-highlight, .pdf-annotation-underline');
       if (annSpan) {
         if (!e.relatedTarget || !e.relatedTarget.closest('#ann-hover-tooltip')) {
@@ -17804,6 +17937,28 @@ if (viewerScrollContainer) {
           }
           return;
         }
+      }
+
+      // ── trans-interactive-ref 클릭 (도표 / 참고문헌 Zotero 스타일 팝오버) ──
+      const interactiveRef = e.target.closest('.trans-interactive-ref');
+      if (interactiveRef) {
+        e.preventDefault();
+        e.stopPropagation();
+        const refType = interactiveRef.dataset.refType;
+        if (refType === 'figure') {
+          const kind = interactiveRef.dataset.kind;
+          const num = interactiveRef.dataset.num;
+          const images = state.documentImages || [];
+          const target = images.find(img => img.label === `${kind} ${num}`);
+          if (target) {
+            showFigurePreviewTooltip([target], interactiveRef, { focus: true, pinned: true });
+          }
+        } else if (refType === 'citation') {
+          const rawKey = interactiveRef.dataset.refKey;
+          const keys = rawKey.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean);
+          showCitationTooltip(state.currentDocId, keys, state.referenceMap || {}, interactiveRef, { focus: true, pinned: true });
+        }
+        return;
       }
 
       // ── trans-sentence 클릭 ──

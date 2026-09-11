@@ -293,6 +293,12 @@ export async function fetchLibraryReferences(docId) {
   return res.json()
 }
 
+export async function fetchLibraryPdfLinks(docId) {
+  const res = await fetch(`${API_BASE}/library/${docId}/links`)
+  if (!res.ok) throw new Error('Failed to fetch PDF internal links')
+  return res.json()
+}
+
 export async function resolveLibraryReference(docId, refNum) {
   const res = await fetch(`${API_BASE}/library/${docId}/references/${encodeURIComponent(refNum)}`)
   if (!res.ok) {

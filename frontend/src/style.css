@@ -6572,6 +6572,31 @@ body.light-theme .citation-tooltip {
   cursor: wait;
 }
 
+/* ── 번역문 패널 내 인터랙티브 인용 및 도표 참조 (Zotero 스타일) ── */
+.trans-interactive-ref {
+  display: inline;
+  text-decoration: underline dotted var(--control-accent, #3b82f6);
+  text-underline-offset: 3px;
+  cursor: pointer;
+  border-radius: 2px;
+  padding: 0 2px;
+  color: var(--control-accent, #3b82f6);
+  font-weight: 500;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.trans-interactive-ref:hover {
+  background-color: rgba(59, 130, 246, 0.18);
+  text-decoration-style: solid;
+}
+body.light-theme .trans-interactive-ref {
+  color: #2563eb;
+  text-decoration-color: #2563eb;
+}
+body.light-theme .trans-interactive-ref:hover {
+  background-color: rgba(37, 99, 235, 0.12);
+}
+
+
 /* ── 본문 "Figure N"/"Table N" 참조 호버 미리보기 ── */
 .figure-ref-marker-box {
   position: absolute;

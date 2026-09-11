@@ -31,7 +31,7 @@ from services.pdf_parser import _INDENT_SENTINEL
 # 대응하기 위함이다(별표는 별도로 먼저 제거).
 _HEADER_PREFIX_RE = re.compile(
     r"^\s*(?:r\s*e\s*f\s*e\s*r\s*e\s*n\s*c\s*e\s*s|b\s*i\s*b\s*l\s*i\s*o\s*g\s*r\s*a\s*p\s*h\s*y|"
-    r"참\s*고\s*문\s*헌)\b",
+    r"l\s*i\s*t\s*e\s*r\s*a\s*t\s*u\s*r\s*e(?:\s+c\s*i\s*t\s*e\s*d)?|참\s*고\s*문\s*헌)\b",
     re.IGNORECASE,
 )
 # 대괄호 키는 순수 숫자([12]) 또는 "저자 이니셜+연도" 꼴([BCV13], [Dev86],

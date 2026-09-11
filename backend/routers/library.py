@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.responses import FileResponse, Response
 from pathlib import Path
 import mimetypes
+import os
 from services.ownership import require_owned_document
 from services.auth import get_current_user
 from services.library import (
@@ -1039,7 +1040,10 @@ async def get_library_references(doc_id: str, current_user: str = Depends(get_cu
     cached = get_page_insight(doc_id, 0, "reference_list")
     if cached is not None:
         try:
-            return {"references": json.loads(cached)}
+            data = json.loads(cached)
+            if isinstance(data, dict) and "references" in data:
+                return data
+            return {"references": data, "start_page": None}
         except Exception:
             pass
 
@@ -1050,7 +1054,8 @@ async def get_library_references(doc_id: str, current_user: str = Depends(get_cu
     import asyncio
     from services.cache import get_cached_pages, save_pages_cache
     from services.pdf_parser import extract_pages
-    from services.reference_parser import extract_reference_list
+    from services.reference_parser import extract_reference_list, find_reference_start_page_index
+    start_page = None
     try:
         # ensure_session()/get_cached_pages()와 같은 디스크 캐시를 공유한다 -
         # 그렇지 않으면 세션이 아직 복원되지 않은 상태(서버 재시작 직후 첫
@@ -1059,12 +1064,51 @@ async def get_library_references(doc_id: str, current_user: str = Depends(get_cu
         if pages is None:
             pages = await asyncio.to_thread(extract_pages, pdf_path, doc.get("parser_engine"))
             save_pages_cache(doc_id, pdf_path, pages, doc.get("parser_engine"), doc.get("parser_version"))
+        
+        ref_start_idx = find_reference_start_page_index(pages)
         references = extract_reference_list(pages)
+        if not references and pdf_path and os.path.exists(pdf_path):
+            from services.pdf_parser import _extract_pages_pymupdf
+            mupdf_pages = await asyncio.to_thread(_extract_pages_pymupdf, pdf_path)
+            references = extract_reference_list(mupdf_pages)
+            if ref_start_idx is None:
+                ref_start_idx = find_reference_start_page_index(mupdf_pages)
+        start_page = (ref_start_idx + 1) if ref_start_idx is not None else None
     except Exception:
         references = {}
+        start_page = None
 
-    save_page_insight(doc_id, 0, "reference_list", json.dumps(references, ensure_ascii=False))
-    return {"references": references}
+    result = {"references": references, "start_page": start_page}
+    save_page_insight(doc_id, 0, "reference_list", json.dumps(result, ensure_ascii=False))
+    return result
+
+
+@router.get("/library/{doc_id}/links")
+async def get_library_pdf_links(doc_id: str, current_user: str = Depends(get_current_user)):
+    """PDF 내에 임베딩된 내부 하이퍼링크(어노테이션) 목록을 반환합니다.
+    Zotero 방식의 100% 정밀한 참고문헌 및 그림/표 매핑에 사용됩니다."""
+    require_owned_document(doc_id, current_user)
+    pdf_path = get_pdf_path(doc_id)
+    if not pdf_path or not os.path.exists(pdf_path):
+        return {"links": {}}
+
+    from services.library import get_page_insight, save_page_insight
+    cached = get_page_insight(doc_id, 0, "pdf_internal_links")
+    if cached is not None:
+        try:
+            return {"links": json.loads(cached)}
+        except Exception:
+            pass
+
+    import asyncio
+    from services.pdf_parser import get_pdf_internal_links
+    try:
+        links = await asyncio.to_thread(get_pdf_internal_links, pdf_path)
+    except Exception:
+        links = {}
+
+    save_page_insight(doc_id, 0, "pdf_internal_links", json.dumps(links, ensure_ascii=False))
+    return {"links": links}
 
 
 @router.get("/library/{doc_id}/references/{ref_num}")

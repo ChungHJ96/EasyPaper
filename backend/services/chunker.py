@@ -216,13 +216,15 @@ def align_sentences(src_text: str, tgt_text: str) -> List[dict]:
 
 def is_running_header_footer(block: dict) -> bool:
     """블록이 상단/하단 러닝 헤더나 푸터, 또는 저널 메타데이터인지 판별합니다."""
-    bbox = block.get("bbox", [0.0, 0.0, 1000.0, 1000.0])
-    # 상단 8% (80pt) 또는 하단 12% (880pt) 이내 여백 영역
-    if bbox[1] < 80.0 or bbox[3] > 880.0:
-        return True
     text = block.get("text", "").strip()
     if not text:
         return True
+    try:
+        from services.pdf_parser import is_metadata_text
+        if is_metadata_text(text):
+            return True
+    except Exception:
+        pass
     # 저널/출판 메타데이터 텍스트 패턴
     if re.search(r'\b(?:Volume\s*\d+|Article\s*[a-z]?\d+|doi:|http[s]?://|www\.)', text, re.IGNORECASE):
         return True

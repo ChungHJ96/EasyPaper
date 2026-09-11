@@ -154,6 +154,52 @@ def _find_cross_page_split(item_text: str, current_fitz_text: str, next_fitz_tex
     return None
 
 
+_METADATA_PATTERNS = [
+    # 저널명, 권/호, 페이지 슬러그 (예: Functional Ecology 2005 19, 129–135, Vol. 19, pp. 129-135)
+    re.compile(r'\b(?:(?:Functional\s+)?Ecology|Journal\s+of|Transactions\s+on|Proceedings\s+of|ECOSPHERE)\b', re.IGNORECASE),
+    re.compile(r'\b(?:\(?\d{4}\)?\s+)?\d{1,4},\s*\d{1,5}[–-]\d{1,5}\b'),
+    re.compile(r'\b(?:Vol(?:ume)?\.?\s*\d+|Issue\s*\d+|pp?\.?\s*\d+[–-]\d+|Article\s*[a-z]?\d+)\b', re.IGNORECASE),
+    # 저작권 및 출판사 표기
+    re.compile(r'(?:©|Copyright|All\s+rights\s+reserved|British\s+Ecological\s+Society|Blackwell|Elsevier|Springer|Wiley|IEEE|ACM)', re.IGNORECASE),
+    # 논문 심사 및 투고 일정
+    re.compile(r'\b(?:Received|Accepted|Revised|Published\s+online|Available\s+online)\b.*?\b(?:19|20)\d{2}\b', re.IGNORECASE),
+    # 교신저자 정보 / 이메일
+    re.compile(r'\b(?:Author\s+to\s+whom\s+correspondence|Correspondence:?|Corresponding\s+author|E-?mail\s*:)\b', re.IGNORECASE),
+    # DOI / URL / 업데이트 체크 / 웹사이트
+    re.compile(r'\b(?:Check\s+for\s+updates|Open\s+Access|doi\.org/10\.\d{4,9}/|doi:\s*10\.|www\.[a-z0-9\-]+\.[a-z]{2,})\b', re.IGNORECASE),
+]
+
+_CAPTION_HEADER_PREFIX_RE = re.compile(
+    r'^(?:\d{1,4}\s+)?[A-Z]\.\s*(?:[A-Z]\.\s*)?[A-Za-z\-]+(?:\s+et\s+al\.?)?\s+(?=(?:Table|Fig(?:ure)?|Equation)\b)',
+    re.IGNORECASE,
+)
+
+
+def is_metadata_text(text: str, page_idx: int = 0, paper_title: str = "") -> bool:
+    """텍스트가 논문 본문이 아닌 출판 메타데이터나 러닝헤더/푸터인지 판별합니다.
+    좌표에 의존하지 않고 내용 시그니처와 2페이지 이후 러닝 타이틀 패턴을 검사합니다."""
+    cleaned = text.strip()
+    if not cleaned:
+        return True
+    if len(cleaned) > 280:
+        return False
+    if cleaned.startswith("<sub>") and cleaned.endswith("</sub>"):
+        return True
+    for pat in _METADATA_PATTERNS:
+        if pat.search(cleaned):
+            return True
+    # 저자 et al. 단독 러닝헤더 (예: 130 K. C. Harding et al.)
+    if re.search(r'^(?:\d{1,4}\s+)?[A-Z]\.\s*(?:[A-Z]\.\s*)?[A-Za-z\-]+(?:\s+et\s+al\.?)?$', cleaned, re.IGNORECASE):
+        return True
+    # 2페이지 이후의 단독 러닝 타이틀 (제목 유사 단문)
+    if page_idx >= 1 and paper_title:
+        c_norm = re.sub(r'[^a-zA-Z0-9\s]', '', re.sub(r'^\d+\s*|\s*\d+$', '', cleaned)).lower().strip()
+        t_norm = re.sub(r'[^a-zA-Z0-9\s]', '', paper_title).lower().strip()
+        if c_norm and len(c_norm) > 5 and (c_norm in t_norm or t_norm in c_norm):
+            return True
+    return False
+
+
 def sanitize_mineru_pages(pages: List[Dict[str, Any]], pdf_path: str) -> List[Dict[str, Any]]:
     """이미 파싱/캐시된 MinerU pages에서 다음 페이지로 유출된 블록들을
     실제 PDF 페이지 경계에 맞게 분할하여 보정합니다."""
@@ -166,6 +212,14 @@ def sanitize_mineru_pages(pages: List[Dict[str, Any]], pdf_path: str) -> List[Di
     except Exception:
         return pages
 
+    detected_title = ""
+    if pages:
+        for b in pages[0].get("blocks", []):
+            t_cand = b.get("text", "").strip()
+            if t_cand and len(t_cand) > 10 and not is_metadata_text(t_cand, 0, ""):
+                detected_title = t_cand.split("\n")[0].strip()
+                break
+
     for p_idx in range(len(pages)):
         curr_p = pages[p_idx]
         has_next = p_idx + 1 < len(pages) and p_idx + 1 < len(fitz_texts)
@@ -176,12 +230,16 @@ def sanitize_mineru_pages(pages: List[Dict[str, Any]], pdf_path: str) -> List[Di
             b_type = block.get("type", 0)
             bbox = block.get("bbox", [0.0, 0.0, 1000.0, 1000.0])
 
-            # 헤더/푸터 및 저널 메타데이터 블록 정제
-            if b_type == 0 and len(txt) < 120 and (bbox[1] < 75.0 or bbox[3] > 905.0):
-                if re.search(r'\b(?:Volume\s*\d+|Article\s*[a-z]?\d+|doi:|http[s]?://|www\.|Check\s+for\s+updates|esa|ECOSPHERE)\b', txt, re.IGNORECASE):
-                    continue
-                if txt.startswith("<sub>") and txt.endswith("</sub>"):
-                    continue
+            # 헤더/푸터 및 저널 메타데이터 블록 정제 (내용 기반 필터링)
+            if b_type == 0 and is_metadata_text(txt, p_idx, detected_title):
+                continue
+
+            if b_type == 1:
+                clean_cap = _CAPTION_HEADER_PREFIX_RE.sub('', txt).strip()
+                if clean_cap and clean_cap != txt:
+                    block = dict(block)
+                    block["text"] = clean_cap
+                    txt = clean_cap
 
             if has_next and b_type == 0 and txt:
                 split_res = _find_cross_page_split(txt, fitz_texts[p_idx], fitz_texts[p_idx + 1])
@@ -263,6 +321,13 @@ def _build_mineru_pages(content_list: Any, total_pages: int = 0, pdf_path: Optio
     for item in adjusted_items:
         pages_items.setdefault(item.get("page_idx", 0), []).append(item)
 
+    detected_title = ""
+    for item in pages_items.get(0, []):
+        t_cand = _mineru_item_text(item).strip()
+        if t_cand and len(t_cand) > 10 and not is_metadata_text(t_cand, 0, ""):
+            detected_title = t_cand.split("\n")[0].strip()
+            break
+
     max_page_idx = max(pages_items.keys()) if pages_items else 0
     num_pages = max(total_pages, max_page_idx + 1)
     pages: List[Dict[str, Any]] = []
@@ -283,23 +348,20 @@ def _build_mineru_pages(content_list: Any, total_pages: int = 0, pdf_path: Optio
                 # 머리말, 꼬리말, 쪽번호, 각주는 번역 스트림에서 완전 제외
                 continue
 
+            if is_metadata_text(txt, page_idx, detected_title):
+                continue
+
             raw_bbox = item.get("bbox")
             if raw_bbox and len(raw_bbox) == 4:
                 bbox = [float(c) for c in raw_bbox]
             else:
                 bbox = [0.0, 0.0, 1000.0, 1000.0]
 
-            # 저널 메타데이터/여백 헤더-푸터 추가 방어 (패턴 매칭)
-            if (bbox[1] < 75.0 or bbox[3] > 905.0) and len(txt) < 120:
-                if re.search(r'\b(?:Volume\s*\d+|Article\s*[a-z]?\d+|doi:|http[s]?://|www\.|Check\s+for\s+updates|esa|ECOSPHERE)\b', txt, re.IGNORECASE):
-                    continue
-                if txt.startswith("<sub>") and txt.endswith("</sub>"):
-                    continue
-
             if t in ("table", "image", "chart"):
+                clean_cap = _CAPTION_HEADER_PREFIX_RE.sub('', txt).strip()
                 caption_blocks.append({
                     "bbox": bbox,
-                    "text": txt,
+                    "text": clean_cap or txt,
                     "type": 1,
                 })
             else:
@@ -2312,18 +2374,63 @@ def _extract_pdf_images_from_doc(doc, pdf_path: str, engine: str) -> List[Dict[s
             if w <= 0 or h <= 0:
                 continue
 
-            images_data.append({
-                "page": page_num + 1,
-                "left": (x0 / page_width) * 100,
-                "top": (y0 / page_height) * 100,
-                "width": (w / page_width) * 100,
-                "height": (h / page_height) * 100,
-                "label": eq["label"],
-                "caption": None,
-            })
+def get_pdf_internal_links(pdf_path: str) -> Dict[int, List[Dict[str, Any]]]:
+    """PDF 파일 내에 임베딩된 내부 하이퍼링크(어노테이션) 목록을 추출합니다.
+    Zotero의 고정밀 인용구/도표 매핑과 동일하게 원천 링크 대상과 텍스트를 제공합니다."""
+    if not pdf_path or not os.path.exists(pdf_path):
+        return {}
 
-    return images_data
+    links_by_page: Dict[int, List[Dict[str, Any]]] = {}
+    try:
+        with fitz.open(pdf_path) as doc:
+            num_pages = len(doc)
+            for p_idx in range(num_pages):
+                page = doc[p_idx]
+                p_width = page.rect.width
+                p_height = page.rect.height
+                if p_width <= 0 or p_height <= 0:
+                    continue
 
+                for l in page.get_links():
+                    if l.get("kind") != fitz.LINK_GOTO:
+                        continue
+                    t_page = l.get("page", -1)
+                    if t_page < 0 or t_page >= num_pages:
+                        continue
+
+                    from_rect = l.get("from")
+                    if not from_rect:
+                        continue
+
+                    # 클릭 영역 백분율 좌표
+                    left_pct = (from_rect.x0 / p_width) * 100.0
+                    top_pct = (from_rect.y0 / p_height) * 100.0
+                    width_pct = ((from_rect.x1 - from_rect.x0) / p_width) * 100.0
+                    height_pct = ((from_rect.y1 - from_rect.y0) / p_height) * 100.0
+
+                    link_text = page.get_text("text", clip=from_rect).strip()
+                    dest_pt = l.get("to")
+
+                    dest_text = ""
+                    dest_page = doc[t_page]
+                    if dest_pt and dest_page.rect.height > 0:
+                        y_anchor = dest_pt.y
+                        clip_rect = fitz.Rect(0, max(0.0, y_anchor - 10.0), dest_page.rect.width, min(dest_page.rect.height, y_anchor + 80.0))
+                        dest_text = dest_page.get_text("text", clip=clip_rect).strip().replace("\n", " ")
+
+                    dest_type = "figure" if re.search(r'^(?:fig|figure|table|tab|equation|eq)\b', dest_text, re.IGNORECASE) else "reference"
+
+                    links_by_page.setdefault(p_idx + 1, []).append({
+                        "from": [left_pct, top_pct, width_pct, height_pct],
+                        "text": link_text,
+                        "target_page": t_page + 1,
+                        "dest_type": dest_type,
+                        "dest_text": dest_text[:200],
+                    })
+    except Exception as e:
+        logger.warning(f"PDF 내부 링크 어노테이션 추출 실패: {e}")
+
+    return links_by_page
 
 
 def clear_parser_memory_cache() -> None:

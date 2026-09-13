@@ -11,10 +11,16 @@ const recovered = [
 ]
 const geometryPdf = fs.readFileSync(new URL('./fixtures/text-geometry.pdf', import.meta.url))
 
-async function openRecovered(page, pdf, spans, recovery = 'ocr') {
+async function openRecovered(page, pdf, spans, recovery = 'ocr', sources = []) {
   const document = { id: 'recovered', filename: 'recovered.pdf', total_pages: 1,
-    metadata: { title: 'Recovered text' }, translated_pages: [] }
+    metadata: { title: 'Recovered text' }, translated_pages: sources.length ? [1] : [] }
   await mockBaseRoutes(page, { documents: [document] })
+  if (sources.length) {
+    const sentences = sources.map((src, i) => ({ src, trans: `번역문 ${i + 1}입니다.` }))
+    await page.route('**/api/library/recovered/translation/1**', route => route.fulfill({ json: {
+      translation: sentences.map(s => s.trans).join('\n\n'), sentences,
+    } }))
+  }
   await page.route('**/api/library/recovered/pdf', route => route.fulfill({ contentType: 'application/pdf', body: pdf }))
   await page.route('**/api/pdf-text/recovered/1', route => route.fulfill({ json: {
     recovery, spans, error: recovery === 'failed' ? 'pdf_ocr_unavailable' : null,
@@ -26,6 +32,110 @@ async function openRecovered(page, pdf, spans, recovery = 'ocr') {
     .filter(animation => animation.effect.getComputedTiming().iterations !== Infinity)
     .map(animation => animation.finished.catch(() => {}))))
 }
+
+for (const scale of [0.8, 1.25]) {
+  test(`glyph-sized OCR mapping and continuous selection at scale ${scale}`, async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 1200 })
+    await page.addInitScript(scale => localStorage.setItem('easypaper_ui_scale', scale), String(scale))
+    const sources = ['日本語の文章です。', 'ひらがなだけです。', 'Linux / UNIX を説明します。', 'النص العربي.']
+    const spans = sources.flatMap((text, line) => [...text].map((text, col) => ({
+      text, bbox: [72 + col * 16, 100 + line * 40 + col % 3 * 2, 84 + col * 16, 116 + line * 40],
+      hasEOL: col === [...sources[line]].length - 1,
+    })))
+    await openRecovered(page, geometryPdf, spans, 'ocr', sources)
+    await expect(page.locator('.trans-sentence').first()).toBeVisible()
+    for (let i = 0; i < sources.length; i++) {
+      await page.locator(`.trans-sentence[data-sentence-idx="${i}"]`).first().hover()
+      await expect(page.locator('.sentence-hover-box')).toHaveCount(1)
+      const box = await page.locator('.sentence-hover-box').boundingBox()
+      const metrics = await page.locator('.textLayer').evaluate(el => {
+        const r = el.getBoundingClientRect(); return { left: r.left, scale: r.width / 600 }
+      })
+      expect(Math.abs(box.x - metrics.left - 72 * metrics.scale)).toBeLessThan(1)
+      expect(Math.abs(box.width - (16 * ([...sources[i]].length - 1) + 12) * metrics.scale)).toBeLessThan(2)
+    }
+    const glyphs = page.locator('.textLayer span')
+    await glyphs.first().scrollIntoViewIfNeeded()
+    await glyphs.first().hover()
+    await expect(page.locator('.sentence-hover-box')).toHaveCount(1)
+    await expect(page.locator('.trans-sentence[data-sentence-idx="0"]').first()).toHaveClass(/sentence-highlight/)
+    const first = await glyphs.nth(0).boundingBox(), last = await glyphs.nth(sources[0].length - 1).boundingBox()
+    await page.mouse.move(first.x + 1, first.y + first.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(last.x + last.width - 1, last.y + last.height / 2, { steps: 12 })
+    await expect(page.locator('.sentence-selection-box')).toHaveCount(1)
+    await page.mouse.up()
+    await expect(page.locator('.sentence-selection-box')).toHaveCount(1)
+    expect(await page.evaluate(() => getSelection().toString().replace(/\s/g, ''))).toBe(sources[0])
+    await page.evaluate(() => getSelection().removeAllRanges())
+    await expect(page.locator('.sentence-selection-box')).toHaveCount(0)
+    await expect(page.locator('.pdf-box-selection')).toHaveCount(0)
+  })
+}
+
+test('translation hover and click include source fragments on both sides of an equation', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 1200 })
+  const lines = ['We begin here.', 'x = y + 1', 'Then we finish here.']
+  await openRecovered(page, geometryPdf, lines.map((text, i) => ({
+    text, bbox: [72, 100 + i * 30, 260, 116 + i * 30], hasEOL: true,
+  })), 'ocr', [lines.join(' ')])
+  const translated = page.locator('.trans-sentence').first()
+  await translated.hover()
+  await expect(page.locator('.sentence-hover-box')).toHaveCount(3)
+  await translated.click()
+  await expect(page.locator('.sentence-active-box')).toHaveCount(3)
+})
+
+test('original Japanese textbook paragraphs map to all recovered glyphs', async ({ page }) => {
+  test.skip(!process.env.EASYPAPER_TEST_MAPPING_FIXTURE, 'User PDF is not redistributed')
+  const root = process.env.EASYPAPER_TEST_MAPPING_FIXTURE
+  const data = JSON.parse(fs.readFileSync(`${root}.json`, 'utf8'))
+  const sources = data.text.split(/\n\s*\n/).filter(Boolean)
+  const warnings = []
+  page.on('console', m => { if (m.text().includes('Failed to match sentence')) warnings.push(m.text()) })
+  await openRecovered(page, fs.readFileSync(`${root}.pdf`), data.text_layer, 'ocr', sources)
+  await expect(page.locator('.trans-sentence').first()).toBeVisible()
+  expect(warnings).toEqual([])
+  // Verify every paragraph, not just the first fragment returned by .find().
+  let searchStart = 0
+  for (let i = 0; i < sources.length; i++) {
+    await page.locator(`.trans-sentence[data-sentence-idx="${i}"]`).first().hover()
+    const result = await page.locator('.textLayer').evaluate((layer, { source, searchStart }) => {
+      const clean = text => text.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{M}\p{N}]/gu, '')
+      let full = ''
+      const spans = [...layer.querySelectorAll('span')].map(el => {
+        const start = full.length; full += clean(el.textContent)
+        return { el, start, end: full.length }
+      })
+      const start = full.indexOf(clean(source), searchStart), end = start + clean(source).length
+      const boxes = [...document.querySelectorAll('.sentence-hover-box')].map(el => el.getBoundingClientRect())
+      const missing = spans.filter(s => s.end > start && s.start < end && s.start !== s.end).filter(({ el }) => {
+        const range = document.createRange(); range.selectNodeContents(el)
+        const r = range.getBoundingClientRect()
+        return !boxes.some(b => b.left <= r.left + 1 && b.right >= r.right - 1 && b.top <= r.top + 1 && b.bottom >= r.bottom - 1)
+      }).map(s => s.el.textContent)
+      return { start, end, missing }
+    }, { source: sources[i], searchStart })
+    expect(result.start).toBeGreaterThanOrEqual(searchStart)
+    expect(result.missing, `paragraph ${i}`).toEqual([])
+    searchStart = result.end
+  }
+  // Paragraph 3 ends in kana: the old matcher clipped the ending and OCR boxes.
+  await page.locator('.trans-sentence[data-sentence-idx="2"]').first().hover()
+  const boxes = page.locator('.sentence-hover-box')
+  await expect(boxes.first()).toBeVisible()
+  expect(await boxes.count()).toBeLessThan(8)
+  const ending = page.locator('.textLayer span').filter({ hasText: 'ます' }).first()
+  const covered = await ending.evaluate(el => {
+    const r = el.getBoundingClientRect()
+    return [...document.querySelectorAll('.sentence-hover-box')].some(box => {
+      const b = box.getBoundingClientRect()
+      return b.left <= r.left + 1 && b.right >= r.right - 1 && b.top <= r.top + 1 && b.bottom >= r.bottom - 1
+    })
+  })
+  expect(covered).toBe(true)
+  await page.screenshot({ path: '/tmp/easypaper-japanese-mapping.png', fullPage: true })
+})
 
 for (const scale of [0.8, 1, 1.25]) {
   test(`OCR boxes preserve each language at UI scale ${scale}`, async ({ page }) => {

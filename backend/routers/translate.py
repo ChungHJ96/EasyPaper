@@ -325,17 +325,6 @@ async def clear_translation_cache(session_id: str, current_user: str = Depends(g
         if os.path.exists(doc_trans_dir):
             shutil.rmtree(doc_trans_dir, ignore_errors=True)
             os.makedirs(doc_trans_dir, exist_ok=True)
-
-        doc_md_dir = os.path.join(doc_dir, "md")
-        if os.path.exists(doc_md_dir):
-            shutil.rmtree(doc_md_dir, ignore_errors=True)
-            os.makedirs(doc_md_dir, exist_ok=True)
-
-        for f in glob.glob(os.path.join(doc_dir, "translation_*.md")):
-            try:
-                os.remove(f)
-            except OSError:
-                pass
         
     meta_path = os.path.join(LIBRARY_DIR, session_id, "metadata.json")
     if os.path.exists(meta_path):

@@ -103,6 +103,31 @@ def _extract_pages_marker(pdf_path: str) -> List[Dict[str, Any]]:
         return _extract_pages_pymupdf(pdf_path)
 
 
+class _TextToken:
+    __slots__ = ("word", "start", "end")
+
+    def __init__(self, word: str, start: int, end: int):
+        self.word = word
+        self.start = start
+        self.end = end
+
+
+_CROSS_PAGE_TOKEN_RE = re.compile(
+    r'[a-zA-Z0-9\u3131-\uD79D\u4e00-\u9fff]+(?:-\s*\n\s*[a-zA-Z0-9\u3131-\uD79D\u4e00-\u9fff]+)*'
+)
+
+
+def normalize_with_offsets(text: str) -> List[_TextToken]:
+    """텍스트에서 정규화 단어와 해당 단어의 원문 시작/끝 오프셋을 추출합니다.
+    하이픈 줄바꿈(예: experi-\n mental)도 하나의 단어로 결합하면서 원문 오프셋을 유지합니다."""
+    tokens = []
+    for m in _CROSS_PAGE_TOKEN_RE.finditer(text):
+        raw = m.group(0)
+        norm = re.sub(r'-\s*\n\s*', '', raw).lower()
+        tokens.append(_TextToken(norm, m.start(), m.end()))
+    return tokens
+
+
 def _find_cross_page_split(item_text: str, current_fitz_text: str, next_fitz_text: str) -> Optional[Tuple[str, str]]:
     """MinerU가 다음 페이지로 이어진 문단을 현재 페이지 블록에 조기 병합해버린 경우,
     실제 PDF 텍스트 레이어(PyMuPDF)와 대조하여 분할 지점(part_curr, part_next)을 찾습니다."""
@@ -114,7 +139,8 @@ def _find_cross_page_split(item_text: str, current_fitz_text: str, next_fitz_tex
         t = re.sub(r'[^a-zA-Z0-9\u3131-\uD79D\u4e00-\u9fff]+', ' ', t)
         return t.strip().lower().split()
 
-    item_words = _norm_words(item_text)
+    tokens = normalize_with_offsets(item_text)
+    item_words = [t.word for t in tokens]
     if len(item_words) < 10:
         return None
 
@@ -138,18 +164,11 @@ def _find_cross_page_split(item_text: str, current_fitz_text: str, next_fitz_tex
     if found_split_word_idx == -1:
         return None
 
-    target_words = item_words[found_split_word_idx:found_split_word_idx + 3]
-    pat = r'\s+'.join(re.escape(w) for w in target_words)
-    m = re.search(pat, item_text, re.IGNORECASE)
-    if not m:
-        m = re.search(r'\b' + re.escape(target_words[0]) + r'\b', item_text, re.IGNORECASE)
-
-    if m:
-        pos = m.start()
-        part1 = item_text[:pos].strip()
-        part2 = item_text[pos:].strip()
-        if part1 and part2:
-            return part1, part2
+    split_pos = tokens[found_split_word_idx].start
+    part_curr = item_text[:split_pos].strip()
+    part_next = item_text[split_pos:].strip()
+    if part_curr and part_next:
+        return part_curr, part_next
 
     return None
 

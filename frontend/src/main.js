@@ -19,6 +19,7 @@ import { ensureLocalResourceIds, hasPendingAnnotationSync, recordLocalResourceCh
 import { icon } from './icons.js'
 import { formatTranslationHtml, applyKatexToElement, linkPageCitations } from './textFormat.js'
 import { prepareMemoMarkdown } from './memoMarkdown.js'
+import { alignSentencesToText } from './sentenceAlignment.js'
 import { createSelectionRect, resolveDragSelection } from './library-selection.js'
 import { globalAnalyticsTracker } from './readingAnalytics.js'
 import { globalReadingTimeActivityTracker } from './readingTimeActivity.js'
@@ -2416,11 +2417,15 @@ if (viewerClearCacheBtn) {
       return
     }
     const currentDocTitle = $('doc-title')?.textContent || '현재 논문'
-    const ok = await showCustomConfirm(`"${currentDocTitle}"의 PDF 추출 캐시를 삭제할까요?\n(다음 열람 시 PDF를 다시 파싱하게 됩니다.)`, { title: 'PDF 캐시 삭제', confirmText: '캐시 삭제' })
+    const ok = await showCustomConfirm(
+      `"${currentDocTitle}"의 PDF 추출 및 번역 캐시를 삭제할까요?\n(다음 열람 시 PDF를 다시 파싱하며, 기존 번역본도 초기화됩니다.)`,
+      { title: '캐시 삭제', confirmText: '캐시 삭제', danger: true }
+    )
     if (!ok) return
     try {
       await clearSingleDocCacheAPI(state.sessionId)
-      showToast('PDF 추출 및 번역 캐시가 삭제되었습니다. 뷰어를 새로고침합니다.', 'success')
+      await clearTranslationCacheAPI(state.sessionId)
+      showToast(t('viewer:cacheClearedReload'), 'success')
       setTimeout(() => window.location.reload(), 500)
     } catch (err) {
       showToast('캐시 삭제 실패: ' + err.message, 'error')
@@ -16004,215 +16009,7 @@ function segmentElementIntoSentences(container, pageNum, className) {
 
 
 
-// 주어진 텍스트에서 원문 문장들의 정확한 문자 범위(start, end)를 유니코드 인지 방식으로 추출하여 매핑합니다.
-function alignSentencesToText(fullText, sentencesList, pageNum = '?') {
-  const cleanToRaw = [];
-  let cleanText = '';
-
-  for (let i = 0; i < fullText.length; i++) {
-    const char = fullText[i];
-    // 알파벳, 숫자, 한글, 한자 및 그리스 문자(수식 기호 대응)만 비교 대상으로 삼음
-    if (/[a-zA-Z0-9\u3131-\uD79D\u4e00-\u9fff\u0370-\u03ff]/.test(char)) {
-      cleanToRaw.push(i);
-      cleanText += char.toLowerCase();
-    }
-  }
-
-  const sentenceRanges = [];
-  let searchStart = 0;
-
-  // 모든 문장 미리 전처리 - null/undefined 방어, LaTeX 명령어 제거 및 그리스 문자 대응
-  const GREEK_MAP = {
-    'alpha': 'α', 'beta': 'β', 'gamma': 'γ', 'delta': 'δ', 'epsilon': 'ε',
-    'zeta': 'ζ', 'eta': 'η', 'theta': 'θ', 'iota': 'ι', 'kappa': 'κ',
-    'lambda': 'λ', 'mu': 'μ', 'nu': 'ν', 'xi': 'ξ', 'pi': 'π',
-    'rho': 'ρ', 'sigma': 'σ', 'tau': 'τ', 'upsilon': 'υ', 'phi': 'φ',
-    'chi': 'χ', 'psi': 'ψ', 'omega': 'ω'
-  };
-
-  const cleanSents = (sentencesList || []).map(s => {
-    let text = s || '';
-
-    // LaTeX 그리스 문자 명령어를 유니코드 문자로 변환
-    for (const [name, unicode] of Object.entries(GREEK_MAP)) {
-      text = text.replace(new RegExp('\\\\' + name, 'g'), unicode);
-    }
-
-    // 기타 백슬래시로 시작하는 LaTeX 명령어 제거 (예: \sum, \int 등)
-    text = text.replace(/\\[a-zA-Z]+/g, '');
-
-    let clean = '';
-    for (let i = 0; i < text.length; i++) {
-      const char = text[i];
-      if (/[a-zA-Z0-9\u3131-\uD79D\u4e00-\u9fff\u0370-\u03ff]/.test(char)) {
-        clean += char.toLowerCase();
-      }
-    }
-    return clean;
-  });
-
-  for (let k = 0; k < cleanSents.length; k++) {
-    const cleanSent = cleanSents[k];
-    const sText = sentencesList[k] || '';
-
-    if (!cleanSent) {
-      const rawPos = cleanToRaw[searchStart] ?? (cleanToRaw[cleanToRaw.length - 1] ?? 0);
-      sentenceRanges.push({
-        text: sText,
-        start: rawPos,
-        end: rawPos
-      });
-      continue;
-    }
-
-    // 1. 순차 검색 시도 (가장 최선)
-    let idx = cleanText.indexOf(cleanSent, searchStart);
-
-    // 2. 접두어 기반 검색 시도 (사소한 문자 오차 해결) - searchStart 이후에서만 찾는다.
-    // 예전에는 이 단계에서 실패하면 fromIndex 없이(처음부터) 다시 검색하는 "전역
-    // 폴백"이 있었는데, indexOf(x, searchStart)가 이미 -1을 반환한 상태에서
-    // indexOf(x)(전체 검색)가 뭔가를 찾는다면 그 위치는 수학적으로 반드시
-    // searchStart보다 앞쪽일 수밖에 없다(그렇지 않다면 위 순차 검색이 이미 찾았을
-    // 것이므로). 즉 이 전역 폴백은 실행될 때마다 예외 없이 직전 문장이 이미 차지한
-    // 구간을 다시 가리켜, 인접한 두 문장의 하이라이트가 겹치는 버그로 항상 이어졌다.
-    // 실패한 문장은 대신 아래 Gap Partitioning이 겹치지 않게 처리하도록 둔다.
-    if (idx === -1) {
-      const prefix = cleanSent.substring(0, Math.min(15, cleanSent.length));
-      idx = cleanText.indexOf(prefix, searchStart);
-    }
-
-    // 3. 비순차 블록(본문 끝단으로 재배치된 표/그림 캡션 등) 무충돌 전역 검색
-    let isOutOfOrder = false;
-    if (idx === -1 && cleanSent.length >= 15) {
-      let candIdx = cleanText.indexOf(cleanSent);
-      if (candIdx === -1 && cleanSent.length >= 25) {
-        candIdx = cleanText.indexOf(cleanSent.substring(0, 25));
-      }
-      if (candIdx !== -1) {
-        const candRawStart = cleanToRaw[candIdx] ?? 0;
-        const candLastIdx = Math.min(cleanText.length, candIdx + cleanSent.length) - 1;
-        const candRawEnd = (cleanToRaw[candLastIdx] !== undefined) ? cleanToRaw[candLastIdx] + 1 : fullText.length;
-        // 기존 매칭된 문장 범위와 충돌(오버랩)하는지 검사
-        const overlaps = sentenceRanges.some(r => r.end > r.start && Math.max(candRawStart, r.start) < Math.min(candRawEnd, r.end));
-        if (!overlaps) {
-          idx = candIdx;
-          isOutOfOrder = true;
-        }
-      }
-    }
-
-    if (idx !== -1) {
-      const cleanStart = idx;
-      const cleanEnd = Math.min(cleanText.length, idx + cleanSent.length);
-      const rawStart = cleanToRaw[cleanStart] ?? (cleanToRaw[cleanToRaw.length - 1] ?? 0);
-      const lastCleanIdx = cleanEnd - 1;
-      const rawEnd = (cleanToRaw[lastCleanIdx] !== undefined)
-        ? cleanToRaw[lastCleanIdx] + 1
-        : (cleanToRaw[cleanToRaw.length - 1] ?? fullText.length);
-
-      sentenceRanges.push({
-        text: fullText.substring(rawStart, rawEnd),
-        start: rawStart,
-        end: rawEnd
-      });
-
-      // 순방향 매칭일 때만 순차 포인터 전진 (비순차 캡션에 의해 본문 포인터가 교란되지 않도록 방지)
-      if (!isOutOfOrder && cleanEnd > searchStart) {
-        searchStart = cleanEnd;
-      }
-    } else {
-      // 매칭 실패 폴백
-      console.warn(`[alignSentencesToText] Failed to match sentence on page ${pageNum}:`, sText);
-      const rawPos = cleanToRaw[searchStart] ?? (cleanToRaw[cleanToRaw.length - 1] ?? 0);
-      sentenceRanges.push({
-        text: sText,
-        start: rawPos,
-        end: rawPos
-      });
-    }
-  }
-
-  // 매칭 실패(길이 0)인 문장들의 범위를 주변 매칭 성공 문장들 사이의 간격으로 분할 보간(Gap Partitioning)
-  // 수식 등의 기호만 있는 문장들이 누락 없이 서로 겹치지 않고 PDF 텍스트 레이어에 균등 분할 마킹되도록 지원.
-  //
-  // 실패한 문장들 사이의 간격을 "개수로 균등 분할"하면 위험하다 - 그림 캡션처럼 원문
-  // 추출 텍스트와 번역 문장 목록이 잘 안 맞는 구간에서 매칭이 연쇄적으로 실패하면,
-  // prevEnd와 nextStart 사이의 간격이 그림이 차지하는 공백이나 전혀 무관한 다른
-  // 단락까지 포함할 정도로 커질 수 있다(실측: 캡션 문장 하나가 수백 자 떨어진 다른
-  // 컬럼의 무관한 문단까지 하이라이트로 끌어옴). 그 큰 간격을 실패한 문장 "개수"로만
-  // 나누면 문장의 실제 길이와 무관하게 넓은 범위가 배정되므로, 대신 (1) 각 문장
-  // 원문(sText) 길이 비율로 나누고, (2) 간격이 실패한 문장들의 원문 길이 합보다
-  // 비정상적으로 크면(그림 등으로 인한 진짜 공백일 가능성) 간격 전체를 억지로 채우지
-  // 않고 prevEnd부터 필요한 만큼만 촘촘히 배정한 뒤 나머지는 어느 문장에도 배정하지
-  // 않고 비워 둔다.
-  const GAP_SAFETY_MULTIPLIER = 2.5;
-  let walkIdx = 0;
-  while (walkIdx < sentenceRanges.length) {
-    if (sentenceRanges[walkIdx].start === sentenceRanges[walkIdx].end) {
-      let k_start = walkIdx;
-      let k_end = walkIdx;
-      while (k_end + 1 < sentenceRanges.length && sentenceRanges[k_end + 1].start === sentenceRanges[k_end + 1].end) {
-        k_end++;
-      }
-
-      let prevEnd = 0;
-      for (let i = k_start - 1; i >= 0; i--) {
-        if (sentenceRanges[i].end > sentenceRanges[i].start) {
-          prevEnd = sentenceRanges[i].end;
-          break;
-        }
-      }
-
-      let nextStart = fullText.length;
-      for (let i = k_end + 1; i < sentenceRanges.length; i++) {
-        if (sentenceRanges[i].end > sentenceRanges[i].start) {
-          nextStart = sentenceRanges[i].start;
-          break;
-        }
-      }
-
-      if (prevEnd < nextStart) {
-        const gapSize = nextStart - prevEnd;
-        const lens = [];
-        let totalLen = 0;
-        for (let i = k_start; i <= k_end; i++) {
-          const len = Math.max(1, (sentenceRanges[i].text || '').length);
-          lens.push(len);
-          totalLen += len;
-        }
-        const usedGap = Math.min(gapSize, totalLen * GAP_SAFETY_MULTIPLIER);
-        let cursor = prevEnd;
-        for (let idx = 0; idx < lens.length; idx++) {
-          const i = k_start + idx;
-          const share = Math.round((lens[idx] / totalLen) * usedGap);
-          sentenceRanges[i].start = cursor;
-          sentenceRanges[i].end = Math.min(nextStart, cursor + share);
-          cursor = sentenceRanges[i].end;
-        }
-      }
-
-      walkIdx = k_end + 1;
-    } else {
-      walkIdx++;
-    }
-  }
-
-  // 최종 안전장치: 인접한 두 문장의 범위가 여전히 겹치면(접두어 폴백이 원문
-  // 오차로 실제보다 넓게 잡거나, 위 두 보정 단계가 손대지 않는 경계에서 우연히
-  // 겹치는 경우) 겹친 구간의 중간 지점에서 서로 맞닿도록 잘라 겹침을 제거한다.
-  // 어느 한쪽이 항상 옳다고 볼 근거가 없으므로 중간 지점에서 공평하게 나눈다.
-  for (let i = 1; i < sentenceRanges.length; i++) {
-    const prev = sentenceRanges[i - 1];
-    const cur = sentenceRanges[i];
-    if (cur.start < prev.end) {
-      const mid = Math.floor((cur.start + prev.end) / 2);
-      prev.end = Math.max(prev.start, mid);
-      cur.start = Math.min(cur.end, mid);
-    }
-  }
-
-  return sentenceRanges;
-}
+// alignSentencesToText는 독립 테스트 및 유지보수를 위해 ./sentenceAlignment.js 모듈로 분리되었습니다.
 
 // ── PDF 텍스트 레이어 비파괴 가상 오버레이 기반 문장 매핑 시스템 ───────────────
 //

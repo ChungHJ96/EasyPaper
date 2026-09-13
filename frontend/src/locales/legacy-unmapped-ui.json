@@ -1,5 +1,10 @@
 {
   "src/main.js": [
+    "OpenDataLoader PDF (권장)",
+    "Java 11+ 런타임 필요",
+    "고정밀 다단 레이아웃·표·수식 분석 오픈소스 파서 (#1 벤치마크, CPU 전용).",
+    "벤치마크 1위 정확도(0.907), 수식 LaTeX 변환, 다단 및 표 추출 우수, GPU 불필요 (초고속)",
+    "약 25 MB",
     "Google Scholar 개별 검색",
     "Google Scholar 검색",
     "[인용된 본문 내용",

@@ -323,7 +323,7 @@ async def save_system_settings(data: SystemSettingsRequest, current_user: str = 
             detail="올바르지 않은 AI 제공업체입니다."
         )
         
-    valid_parsers = ["pymupdf", "pdfplumber", "marker", "mineru"]
+    valid_parsers = ["opendataloader", "pymupdf", "pdfplumber", "marker", "mineru"]
     if pdf_parser_engine not in valid_parsers:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -413,6 +413,8 @@ def _is_pdf_parser_installed(engine: str) -> bool:
         return venv_manager.is_parser_installed(engine)
     if engine == "pdfplumber":
         return _is_package_installed("pdfplumber")
+    if engine == "opendataloader":
+        return _is_package_installed("opendataloader_pdf")
     venv_dir = (
         venv_manager.MINERU_VENV if engine == "mineru"
         else venv_manager.DEFAULT_VENV
@@ -424,6 +426,16 @@ def _is_pdf_parser_installed(engine: str) -> bool:
 async def get_pdf_parsers_info(current_user: str = Depends(get_current_user)):
     current_engine = get_pdf_parser_engine()
     parsers = [
+        {
+            "id": "opendataloader",
+            "name": "OpenDataLoader PDF (권장)",
+            "description": "고정밀 다단 레이아웃·표·수식 분석 오픈소스 파서 (#1 벤치마크, CPU 전용)",
+            "pros": "벤치마크 1위 정확도(0.907), 수식 LaTeX 변환, 다단 및 표 추출 우수, GPU 불필요 (초고속)",
+            "cons": "Java 11+ 런타임 필요",
+            "size_info": "약 25 MB",
+            "installed": _is_pdf_parser_installed("opendataloader"),
+            "install_package": "opendataloader-pdf"
+        },
         {
             "id": "pymupdf",
             "name": "PyMuPDF (fitz)",

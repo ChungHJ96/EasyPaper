@@ -14,7 +14,7 @@ from services.pdf_parser import extract_pages, extract_pdf_images
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--pdf", required=True)
-    parser.add_argument("--engine", required=True, choices=("pymupdf", "pdfplumber", "marker", "mineru"))
+    parser.add_argument("--engine", required=True, choices=("opendataloader", "pymupdf", "pdfplumber", "marker", "mineru"))
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
 

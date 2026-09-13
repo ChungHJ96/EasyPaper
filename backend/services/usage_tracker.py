@@ -15,7 +15,10 @@ from pathlib import Path
 # 상대경로로 폴백한다. services/db.py의 DB_PATH와 동일한 파일을 가리켜야
 # 하는데 이쪽만 env override를 지원하지 않아 패키징된 앱에서 사용량 기록이
 # db.py가 쓰는 실제 DB와 다른 파일에 저장되거나 쓰기 실패할 수 있었다.
-DB_PATH = os.getenv("DB_PATH") or str(Path(__file__).parent.parent / "easypaper.db")
+DB_PATH = os.getenv("DB_PATH") or (
+    str(Path(os.getenv("HJPAPER_CONFIG_DIR")) / "hjpaper.db") if os.getenv("HJPAPER_CONFIG_DIR")
+    else str(Path(__file__).parent.parent / "hjpaper.db")
+)
 
 # 일일 소프트 한도 (agy 정책에 따라 조정 가능)
 DAILY_SOFT_LIMIT = 1000  # requests/day 기준

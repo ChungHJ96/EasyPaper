@@ -2,7 +2,7 @@ import sys
 
 # PyInstaller sidecar는 일반 Python 인터프리터가 아니어서 ``-m pip``를
 # 실행할 수 없다. 설치용으로 자신을 다시 띄운 경우 서버 import 전에 분기한다.
-if len(sys.argv) > 1 and sys.argv[1] == "--easypaper-install-pdf-parser":
+if len(sys.argv) > 1 and sys.argv[1] in ("--hjpaper-install-pdf-parser", "--easypaper-install-pdf-parser"):
     from venv_manager import run_packaged_parser_installer
     raise SystemExit(run_packaged_parser_installer())
 
@@ -52,11 +52,10 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(
-    title="EasyPaper API",
+    title="HJPaper API",
     description="PDF 논문 번역 서비스 (Gemma 4 E4B + Ollama)",
     version="1.0.0",
     lifespan=lifespan,
-
 )
 
 @app.exception_handler(HTTPException)
@@ -122,7 +121,7 @@ FRONTEND_CSP = (
 )
 
 
-FRONTEND_DIST = os.getenv("EASYPAPER_FRONTEND_DIST") or os.path.join(os.path.dirname(__file__), "../frontend/dist")
+FRONTEND_DIST = os.getenv("HJPAPER_FRONTEND_DIST") or os.getenv("EASYPAPER_FRONTEND_DIST") or os.path.join(os.path.dirname(__file__), "../frontend/dist")
 if os.path.exists(FRONTEND_DIST):
     # /assets 등 정적 자산
     app.mount("/assets", StaticFiles(directory=os.path.join(FRONTEND_DIST, "assets")), name="assets")

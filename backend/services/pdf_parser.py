@@ -2,6 +2,7 @@ import base64
 import fitz  # PyMuPDF
 import os
 import re
+import threading
 from functools import lru_cache
 from typing import List, Dict, Any, Optional, Tuple
 
@@ -20,7 +21,9 @@ def extract_pages(pdf_path: str, engine: Optional[str] = None) -> List[Dict[str,
 
     engine = (engine or "pymupdf").lower().strip()
 
-    if engine == "pdfplumber":
+    if engine == "opendataloader":
+        pages = _extract_pages_opendataloader(pdf_path)
+    elif engine == "pdfplumber":
         pages = _extract_pages_pdfplumber(pdf_path)
     elif engine == "marker":
         pages = _extract_pages_marker(pdf_path)
@@ -532,6 +535,146 @@ def _build_mineru_pages(content_list: Any, total_pages: int = 0, pdf_path: Optio
             "text": text_content,
             "blocks": all_blocks,
             "parser_engine": "mineru",
+        })
+
+    if pages:
+        pages = filter_repeated_headers_footers(pages, paper_title=detected_title)
+    return pages
+
+
+def _extract_pages_opendataloader(pdf_path: str) -> List[Dict[str, Any]]:
+    try:
+        data = _run_opendataloader(pdf_path)
+        kids = data.get("kids", [])
+        total_pages = data.get("number of pages", 0)
+        if total_pages <= 0:
+            try:
+                with fitz.open(pdf_path) as d:
+                    total_pages = len(d)
+            except Exception:
+                pass
+
+        pages = _build_opendataloader_pages(kids, total_pages, pdf_path=pdf_path)
+        if not pages:
+            return _extract_pages_pymupdf(pdf_path)
+        return pages
+    except Exception as e:
+        import logging
+        logging.warning(f"OpenDataLoader 파서 실행 실패 ({e}). PyMuPDF 파서로 폴백합니다.")
+        return _extract_pages_pymupdf(pdf_path)
+
+
+def _build_opendataloader_pages(kids: List[Dict[str, Any]], total_pages: int = 0, pdf_path: Optional[str] = None) -> List[Dict[str, Any]]:
+    """OpenDataLoader kids 목록을 페이지별 텍스트 및 바운딩 박스 블록으로 조립합니다.
+    OpenDataLoader는 [left, bottom, right, top] PDF 포인트 좌표(72pt=1인치)를 제공합니다.
+    본문 문맥이 캡션/표에 끊기지 않도록 본문 텍스트를 먼저 연결하고 캡션은 type=1로 분리합니다."""
+    if not kids:
+        return []
+
+    page_dims: Dict[int, Tuple[float, float]] = {}
+    if pdf_path and os.path.exists(pdf_path):
+        try:
+            with fitz.open(pdf_path) as d:
+                if total_pages <= 0:
+                    total_pages = len(d)
+                for p_idx in range(len(d)):
+                    p = d[p_idx]
+                    page_dims[p_idx + 1] = (float(p.rect.width), float(p.rect.height))
+        except Exception:
+            pass
+
+    pages_items: Dict[int, List[Dict[str, Any]]] = {}
+    for item in kids:
+        if not isinstance(item, dict):
+            continue
+        p_num = item.get("page number", 1)
+        pages_items.setdefault(p_num, []).append(item)
+
+    max_p_num = max(pages_items.keys()) if pages_items else 1
+    num_pages = max(total_pages, max_p_num)
+
+    detected_title = ""
+    for item in pages_items.get(1, []):
+        t = item.get("type")
+        c = (item.get("content") or "").strip()
+        if t in ("heading", "paragraph") and c and len(c) > 10 and not is_metadata_text(c, 0, ""):
+            detected_title = re.sub(r'\s+', ' ', c).strip()
+            break
+
+    pages: List[Dict[str, Any]] = []
+
+    for p_num in range(1, num_pages + 1):
+        pw, ph = page_dims.get(p_num, (595.0, 842.0))
+        items = pages_items.get(p_num, [])
+        body_blocks: List[Dict[str, Any]] = []
+        caption_blocks: List[Dict[str, Any]] = []
+
+        for item in items:
+            t = item.get("type", "")
+            if t in ("header", "footer", "page_number", "page_footnote"):
+                continue
+
+            raw_txt = (item.get("content") or "").strip()
+            if not raw_txt and t in ("picture", "image"):
+                raw_txt = (item.get("description") or "").strip()
+            txt = clean_text_for_translation(raw_txt)
+            if not txt:
+                continue
+
+            if is_metadata_text(txt, p_num - 1, detected_title):
+                continue
+
+            raw_bbox = item.get("bounding box")
+            if raw_bbox and len(raw_bbox) == 4:
+                left, bottom, right, top = float(raw_bbox[0]), float(raw_bbox[1]), float(raw_bbox[2]), float(raw_bbox[3])
+                x0 = max(0.0, min(left, pw))
+                x1 = max(0.0, min(right, pw))
+                y0 = max(0.0, min(ph - top, ph))
+                y1 = max(0.0, min(ph - bottom, ph))
+                if y0 > y1:
+                    y0, y1 = y1, y0
+                if x0 > x1:
+                    x0, x1 = x1, x0
+                bbox = [x0, y0, x1, y1]
+            else:
+                bbox = [0.0, 0.0, pw, ph]
+
+            if t in ("caption", "table", "picture", "image", "chart"):
+                clean_cap = _CAPTION_HEADER_PREFIX_RE.sub('', txt).strip()
+                caption_blocks.append({
+                    "bbox": bbox,
+                    "text": clean_cap or txt,
+                    "type": 1,
+                })
+            else:
+                body_blocks.append({
+                    "bbox": bbox,
+                    "text": txt,
+                    "type": 0,
+                })
+
+        body_str = "\n\n".join(b["text"] for b in body_blocks).strip()
+        caption_str = "\n\n".join(b["text"] for b in caption_blocks).strip()
+
+        if body_str and caption_str:
+            page_text = f"{body_str}\n\n{caption_str}"
+        elif body_str:
+            page_text = body_str
+        else:
+            page_text = caption_str
+
+        text_content = clean_text_for_translation(page_text)
+        all_blocks = body_blocks + caption_blocks
+        if not all_blocks and text_content:
+            all_blocks = [{"bbox": [0.0, 0.0, pw, ph], "text": text_content, "type": 0}]
+
+        pages.append({
+            "page_num": p_num,
+            "text": text_content,
+            "blocks": all_blocks,
+            "parser_engine": "opendataloader",
+            "width": pw,
+            "height": ph,
         })
 
     if pages:
@@ -1442,41 +1585,250 @@ def _marker_page_regions(page_json) -> List[Dict[str, Any]]:
     return regions
 
 
-# ── MinerU 엔진 연동 ──────────────────────────────────────────────────────
-@lru_cache(maxsize=2)
+_opendataloader_lock = threading.Lock()
+_opendataloader_cache: Dict[str, dict] = {}
+
+
+def _ensure_java_available() -> None:
+    """OpenDataLoader 실행에 필요한 Java 런타임이 PATH에 잡혀있는지 확인하고,
+    Homebrew/macOS OpenJDK 경로를 PATH 최우선 순위로 추가합니다."""
+    homebrew_openjdk = "/opt/homebrew/opt/openjdk/bin"
+    if os.path.exists(os.path.join(homebrew_openjdk, "java")):
+        current_paths = os.environ.get("PATH", "").split(":")
+        if not current_paths or current_paths[0] != homebrew_openjdk:
+            os.environ["PATH"] = f"{homebrew_openjdk}:{os.environ.get('PATH', '')}"
+        os.environ.setdefault("JAVA_HOME", "/opt/homebrew/opt/openjdk")
+        return
+
+    intel_openjdk = "/usr/local/opt/openjdk/bin"
+    if os.path.exists(os.path.join(intel_openjdk, "java")):
+        current_paths = os.environ.get("PATH", "").split(":")
+        if not current_paths or current_paths[0] != intel_openjdk:
+            os.environ["PATH"] = f"{intel_openjdk}:{os.environ.get('PATH', '')}"
+        os.environ.setdefault("JAVA_HOME", "/usr/local/opt/openjdk")
+        return
+
+
+def _run_opendataloader(pdf_path: str) -> dict:
+    """OpenDataLoader PDF 엔진으로 변환을 수행하여 계층적 JSON 딕셔너리를 반환합니다.
+    자바 기반의 결정론적 레이아웃 엔진으로 별도 GPU 없이 초고속(0.015초/p)으로 실행됩니다."""
+    with _opendataloader_lock:
+        if pdf_path in _opendataloader_cache:
+            return _opendataloader_cache[pdf_path]
+
+        _ensure_java_available()
+        import json
+        import os
+        import tempfile
+        import opendataloader_pdf
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            opendataloader_pdf.convert(
+                input_path=[pdf_path],
+                output_dir=tmp_dir,
+                format="json,markdown"
+            )
+            base_name = os.path.splitext(os.path.basename(pdf_path))[0]
+            json_file = os.path.join(tmp_dir, f"{base_name}.json")
+            if not os.path.exists(json_file):
+                for f in os.listdir(tmp_dir):
+                    if f.endswith(".json"):
+                        json_file = os.path.join(tmp_dir, f)
+                        break
+
+            if not os.path.exists(json_file):
+                raise RuntimeError(f"OpenDataLoader JSON 출력 파일을 찾을 수 없습니다: {tmp_dir}")
+
+            with open(json_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+        if len(_opendataloader_cache) >= 8:
+            _opendataloader_cache.pop(next(iter(_opendataloader_cache)))
+        _opendataloader_cache[pdf_path] = data
+        return data
+
+
+def _opendataloader_page_regions(kids: List[Dict[str, Any]], pdf_path: str) -> List[Dict[str, Any]]:
+    """OpenDataLoader kids 목록에서 table, picture/image, equation 영역을 추출해
+    0~100% 비율 좌표 및 캡션/라벨 목록으로 변환합니다."""
+    if not kids:
+        return []
+
+    page_dims: Dict[int, Tuple[float, float]] = {}
+    if pdf_path and os.path.exists(pdf_path):
+        try:
+            with fitz.open(pdf_path) as d:
+                for p_idx in range(len(d)):
+                    p = d[p_idx]
+                    page_dims[p_idx + 1] = (float(p.rect.width), float(p.rect.height))
+        except Exception:
+            pass
+
+    captions_by_page: Dict[int, List[Dict[str, Any]]] = {}
+    for item in kids:
+        if item.get("type") == "caption":
+            p_num = item.get("page number", 1)
+            captions_by_page.setdefault(p_num, []).append(item)
+
+    regions_data: List[Dict[str, Any]] = []
+
+    for item in kids:
+        t = item.get("type")
+        if t not in ("picture", "image", "chart", "table", "equation", "formula"):
+            continue
+
+        raw_bbox = item.get("bounding box")
+        if not raw_bbox or len(raw_bbox) != 4:
+            continue
+
+        p_num = item.get("page number", 1)
+        pw, ph = page_dims.get(p_num, (595.0, 842.0))
+        if pw <= 0 or ph <= 0:
+            continue
+
+        left, bottom, right, top = float(raw_bbox[0]), float(raw_bbox[1]), float(raw_bbox[2]), float(raw_bbox[3])
+        x0 = max(0.0, min(left, pw))
+        x1 = max(0.0, min(right, pw))
+        y0 = max(0.0, min(ph - top, ph))
+        y1 = max(0.0, min(ph - bottom, ph))
+        if y0 > y1:
+            y0, y1 = y1, y0
+        if x0 > x1:
+            x0, x1 = x1, x0
+
+        left_pct = (x0 / pw) * 100.0
+        top_pct = (y0 / ph) * 100.0
+        width_pct = ((x1 - x0) / pw) * 100.0
+        height_pct = ((y1 - y0) / ph) * 100.0
+
+        if width_pct < 0.5 or height_pct < 0.3:
+            continue
+
+        label, caption = None, None
+        content_txt = (item.get("content") or "").strip()
+
+        if t in ("picture", "image", "chart"):
+            item_id = item.get("id")
+            matched_cap = None
+            if item_id is not None:
+                for cap in captions_by_page.get(p_num, []):
+                    if cap.get("linked content id") == item_id:
+                        matched_cap = cap.get("content", "")
+                        break
+            if not matched_cap and captions_by_page.get(p_num):
+                best_dist = 999999.0
+                for cap in captions_by_page.get(p_num, []):
+                    c_text = (cap.get("content") or "").strip()
+                    if re.match(r"^\s*Fig", c_text, re.IGNORECASE):
+                        c_bbox = cap.get("bounding box")
+                        if c_bbox and len(c_bbox) == 4:
+                            c_top = ph - float(c_bbox[3])
+                            dist = abs(c_top - y1)
+                            if dist < best_dist and dist < 150.0:
+                                best_dist = dist
+                                matched_cap = c_text
+            label, caption = _match_label_from_caption_text(matched_cap or content_txt or None)
+            if not label and re.match(r"^\s*Fig", content_txt, re.IGNORECASE):
+                label, caption = _match_label_from_caption_text(content_txt)
+        elif t == "table":
+            item_id = item.get("id")
+            matched_cap = None
+            if item_id is not None:
+                for cap in captions_by_page.get(p_num, []):
+                    if cap.get("linked content id") == item_id:
+                        matched_cap = cap.get("content", "")
+                        break
+            if not matched_cap and captions_by_page.get(p_num):
+                best_dist = 999999.0
+                for cap in captions_by_page.get(p_num, []):
+                    c_text = (cap.get("content") or "").strip()
+                    if re.match(r"^\s*Tab", c_text, re.IGNORECASE):
+                        c_bbox = cap.get("bounding box")
+                        if c_bbox and len(c_bbox) == 4:
+                            c_bottom = ph - float(c_bbox[1])
+                            dist = abs(y0 - c_bottom)
+                            if dist < best_dist and dist < 150.0:
+                                best_dist = dist
+                                matched_cap = c_text
+            label, caption = _match_label_from_caption_text(matched_cap or content_txt or None)
+            if not label and re.match(r"^\s*Tab", content_txt, re.IGNORECASE):
+                label, caption = _match_label_from_caption_text(content_txt)
+        else: # equation, formula
+            m = _EQUATION_LINE_RE.search(content_txt)
+            label = f"Equation {m.group(1)}" if m and m.group(1) else "Equation"
+            caption = content_txt or None
+
+        regions_data.append({
+            "page": p_num,
+            "left": left_pct,
+            "top": top_pct,
+            "width": width_pct,
+            "height": height_pct,
+            "label": label,
+            "caption": caption,
+        })
+
+    return regions_data
+
+
+_mineru_run_lock = threading.Lock()
+_mineru_cache: Dict[str, tuple] = {}
+
+
 def _run_mineru(pdf_path: str) -> tuple:
     """MinerU pipeline 백엔드로 파싱해 content_list(블록별 type/bbox/caption 목록)를
     돌려준다. do_parse()는 결과를 디스크에 파일로만 저장하므로 임시 디렉터리에
     받아 content_list.json을 읽어들인다. bbox는 0~1000 범위로 정규화되어 있다
-    (MinerU 자체 규격 - 페이지 크기와 무관하게 그대로 퍼센트 변환 가능)."""
-    import json
-    import os
-    import tempfile
-    from mineru.cli.common import do_parse
+    (MinerU 자체 규격 - 페이지 크기와 무관하게 그대로 퍼센트 변환 가능).
+    
+    Apple Silicon Metal(MPS) 동시 접근 충돌을 방지하기 위해 프로세스 내
+    _mineru_run_lock으로 동시 실행을 직렬화하고, 실행 후 MPS 캐시를 동기화/정리한다."""
+    with _mineru_run_lock:
+        if pdf_path in _mineru_cache:
+            return _mineru_cache[pdf_path]
 
-    with open(pdf_path, "rb") as f:
-        pdf_bytes = f.read()
+        import json
+        import os
+        import tempfile
+        from mineru.cli.common import do_parse
 
-    pdf_file_name = "doc"
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        do_parse(
-            output_dir=tmp_dir,
-            pdf_file_names=[pdf_file_name],
-            pdf_bytes_list=[pdf_bytes],
-            p_lang_list=["en"],
-            backend="pipeline",
-            f_draw_layout_bbox=False,
-            f_draw_span_bbox=False,
-            f_dump_md=False,
-            f_dump_middle_json=False,
-            f_dump_model_output=False,
-            f_dump_orig_pdf=False,
-            f_dump_content_list=True,
-        )
-        content_list_path = os.path.join(tmp_dir, pdf_file_name, "auto", f"{pdf_file_name}_content_list.json")
-        with open(content_list_path, "r", encoding="utf-8") as f:
-            content_list = json.load(f)
-    return tuple(content_list)
+        with open(pdf_path, "rb") as f:
+            pdf_bytes = f.read()
+
+        pdf_file_name = "doc"
+        try:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                do_parse(
+                    output_dir=tmp_dir,
+                    pdf_file_names=[pdf_file_name],
+                    pdf_bytes_list=[pdf_bytes],
+                    p_lang_list=["en"],
+                    backend="pipeline",
+                    f_draw_layout_bbox=False,
+                    f_draw_span_bbox=False,
+                    f_dump_md=False,
+                    f_dump_middle_json=False,
+                    f_dump_model_output=False,
+                    f_dump_orig_pdf=False,
+                    f_dump_content_list=True,
+                )
+                content_list_path = os.path.join(tmp_dir, pdf_file_name, "auto", f"{pdf_file_name}_content_list.json")
+                with open(content_list_path, "r", encoding="utf-8") as f:
+                    content_list = json.load(f)
+
+            res = tuple(content_list)
+            if len(_mineru_cache) >= 4:
+                _mineru_cache.pop(next(iter(_mineru_cache)))
+            _mineru_cache[pdf_path] = res
+            return res
+        finally:
+            try:
+                import torch
+                if hasattr(torch, "mps") and hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                    torch.mps.synchronize()
+                    torch.mps.empty_cache()
+            except Exception:
+                pass
 
 
 def _mineru_item_text(item: Dict[str, Any]) -> str:
@@ -2188,7 +2540,16 @@ def extract_pdf_images(pdf_path: str, engine: Optional[str] = None) -> List[Dict
     # (그룹인 경우) 캡션까지 감지해준다 - pymupdf 휴리스틱을 돌릴 필요가 없고,
     # 오히려 marker/mineru가 인식한 실제 텍스트 순서/구조와 무관한 별개의 좌표계라
     # 섞어 쓰면 안 된다. 실패 시에만 pymupdf 휴리스틱으로 폴백한다.
-    if engine == "marker":
+    if engine == "opendataloader":
+        try:
+            data = _run_opendataloader(pdf_path)
+            kids = data.get("kids", [])
+            return _opendataloader_page_regions(kids, pdf_path)
+        except Exception as e:
+            import logging
+            logging.warning(f"OpenDataLoader 레이아웃 추출 실패 ({e}). PyMuPDF 휴리스틱으로 폴백합니다.")
+            engine = "pymupdf"
+    elif engine == "marker":
         try:
             from marker.renderers.json import JSONRenderer
             document, converter = _build_marker_document(pdf_path)
@@ -2578,5 +2939,15 @@ def get_pdf_internal_links(pdf_path: str) -> Dict[int, List[Dict[str, Any]]]:
 
 def clear_parser_memory_cache() -> None:
     """Discard document-specific advanced parser artifacts after cache invalidation."""
-    _build_marker_document.cache_clear()
-    _run_mineru.cache_clear()
+    try:
+        _build_marker_document.cache_clear()
+    except Exception:
+        pass
+    try:
+        _run_mineru.cache_clear()
+    except Exception:
+        pass
+    try:
+        _opendataloader_cache.clear()
+    except Exception:
+        pass

@@ -1,15 +1,15 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "EasyPaper",
+  "productName": "HJPaper",
   "version": "1.0.0",
-  "identifier": "com.easypaper.desktop",
+  "identifier": "com.hjpaper.desktop",
   "build": {
     "frontendDist": "loading-page"
   },
   "app": {
     "windows": [
       {
-        "title": "EasyPaper",
+        "title": "HJPaper",
         "width": 800,
         "height": 600,
         "resizable": true,

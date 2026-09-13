@@ -4071,6 +4071,7 @@ let pdfParsersData = []
 let targetInstallParserId = null
 
 const PARSER_FALLBACK_META = {
+  opendataloader: { id: 'opendataloader', name: 'OpenDataLoader PDF (권장)', installed: true, size_info: '약 25 MB', description: '고정밀 다단 레이아웃·표·수식 분석 오픈소스 파서 (#1 벤치마크, CPU 전용).', pros: '벤치마크 1위 정확도(0.907), 수식 LaTeX 변환, 다단 및 표 추출 우수, GPU 불필요 (초고속)', cons: 'Java 11+ 런타임 필요' },
   pymupdf: { id: 'pymupdf', name: 'PyMuPDF (fitz)', installed: true, size_info: '0 MB', description: '기본 제공 파서 - 텍스트 중심 문서에서 초고속으로 작동합니다.', pros: '초고속 (몇 ms 내 처리), 별도 설치 필요 없음', cons: '2단 복잡 구조, 수식 텍스트 엉킴 발생 가능' },
   pdfplumber: { id: 'pdfplumber', name: 'pdfplumber', installed: false, size_info: '약 15 MB', description: 'Python 기반 파서 - 표(Table) 추출 및 텍스트 위치 정밀 추적에 강점.', pros: '표(Table) 파싱 우수, 정밀 좌표 추적', cons: '소폭 더 큼, 수식 OCR 미지정' },
   marker: { id: 'marker', name: 'Marker (AI Markdown)', installed: false, size_info: '약 2.5 GB', description: '딥러닝 비전/레이아웃 AI - 논문 전체를 깨끗한 Markdown/LaTeX 수식으로 변환.', pros: '수식, 표, 2단 레이아웃 매우 정밀 분석', cons: '최초 모델 설치 시 대용량 다운로드 필요' },

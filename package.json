@@ -1,8 +1,8 @@
 {
-  "name": "easypaper-desktop",
+  "name": "hjpaper-desktop",
   "private": true,
   "version": "1.0.0",
-  "description": "EasyPaper Tauri 데스크탑 스파이크 (src-tauri/ 스캐폴딩 전용, frontend/의 웹 앱 패키지와는 별개)",
+  "description": "HJPaper Tauri 데스크탑 (src-tauri/ 스캐폴딩 전용, frontend/의 웹 앱 패키지와는 별개)",
   "scripts": {
     "tauri": "tauri"
   },

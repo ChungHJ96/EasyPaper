@@ -7,7 +7,10 @@ from typing import Optional, List, Dict, Any, Tuple
 
 # DB_PATH 환경변수가 있으면 그대로 쓰고(Docker 등에서 데이터 볼륨 경로로
 # 지정), 없으면 기존과 동일하게 backend/의 부모 기준 경로를 그대로 쓴다.
-DB_PATH = os.getenv("DB_PATH") or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "easypaper.db")
+DB_PATH = os.getenv("DB_PATH") or (
+    os.path.join(os.getenv("HJPAPER_CONFIG_DIR"), "hjpaper.db") if os.getenv("HJPAPER_CONFIG_DIR")
+    else os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hjpaper.db")
+)
 
 def get_db():
     # busy_timeout: 번역 잡이 쓰기 커넥션을 잡고 있는 동안(db_save_translation)

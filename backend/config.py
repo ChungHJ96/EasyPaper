@@ -16,11 +16,11 @@ if sys.platform == "win32":
 def _get_config_dir() -> str:
     """.env / translation_prompt.txt를 읽고 쓸 디렉토리.
 
-    EASYPAPER_CONFIG_DIR이 설정되어 있으면 그 경로(패키징된 데스크탑 앱이
+    HJPAPER_CONFIG_DIR 또는 EASYPAPER_CONFIG_DIR이 설정되어 있으면 그 경로(패키징된 데스크탑 앱이
     OS별 사용자 데이터 디렉토리를 주입하는 용도)를, 없으면 기존과 동일하게
     backend/ 디렉토리 자체를 사용한다(서버/Docker 배포 하위호환).
     """
-    return os.getenv("EASYPAPER_CONFIG_DIR") or os.path.dirname(os.path.abspath(__file__))
+    return os.getenv("HJPAPER_CONFIG_DIR") or os.getenv("EASYPAPER_CONFIG_DIR") or os.path.dirname(os.path.abspath(__file__))
 
 
 load_dotenv(os.path.join(_get_config_dir(), ".env"))
@@ -48,7 +48,7 @@ CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "")
 # pool"로 분류된다. 선택 사항이라 비워둬도 정상 동작한다.
 OPENALEX_MAILTO = os.getenv("OPENALEX_MAILTO", "")
 
-PDF_PARSER_ENGINE = os.getenv("PDF_PARSER_ENGINE", "pymupdf")
+PDF_PARSER_ENGINE = os.getenv("PDF_PARSER_ENGINE", "opendataloader")
 
 MAX_FILE_SIZE_MB = int(os.getenv("MAX_FILE_SIZE_MB", "50"))
 SESSION_TTL_HOURS = int(os.getenv("SESSION_TTL_HOURS", "24"))
@@ -203,7 +203,7 @@ def update_system_settings(
     gemini_api_key: str = "",
     claude_api_key: str = "",
     openalex_mailto: str = "",
-    pdf_parser_engine: str = "pymupdf",
+    pdf_parser_engine: str = "opendataloader",
     analysis_provider: str = "",
     analysis_model: str = "",
     library_provider: str = "",

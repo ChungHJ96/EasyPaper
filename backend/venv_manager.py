@@ -20,22 +20,23 @@ DEFAULT_VENV = os.path.join(_BACKEND_DIR, ".venv")
 MINERU_VENV = os.path.join(_BACKEND_DIR, ".venv-mineru")
 
 PARSER_PACKAGES = {
+    "opendataloader": ("opendataloader-pdf", "opendataloader_pdf"),
     "pdfplumber": ("pdfplumber", "pdfplumber"),
     "marker": ("marker-pdf", "marker"),
     "mineru": ("mineru[pipeline]", "mineru"),
 }
 
-_PACKAGED_INSTALL_ARG = "--easypaper-install-pdf-parser"
-_active_engine = "pymupdf"
+_PACKAGED_INSTALL_ARG = "--hjpaper-install-pdf-parser"
+_active_engine = "opendataloader"
 
 
 def is_packaged_desktop() -> bool:
     """Tauri가 실행한 PyInstaller sidecar인지 판별한다."""
-    return bool(getattr(sys, "frozen", False)) and os.getenv("EASYPAPER_DESKTOP") == "1"
+    return bool(getattr(sys, "frozen", False)) and (os.getenv("HJPAPER_DESKTOP") == "1" or os.getenv("EASYPAPER_DESKTOP") == "1")
 
 
 def parser_packages_root() -> str:
-    config_dir = os.getenv("EASYPAPER_CONFIG_DIR") or _BACKEND_DIR
+    config_dir = os.getenv("HJPAPER_CONFIG_DIR") or os.getenv("EASYPAPER_CONFIG_DIR") or _BACKEND_DIR
     return os.path.join(config_dir, "pdf-parser-packages")
 
 

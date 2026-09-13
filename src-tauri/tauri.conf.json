@@ -26,7 +26,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "createUpdaterArtifacts": true,
+    "createUpdaterArtifacts": false,
     "resources": [
       "binaries/easypaper-backend/**/*"
     ],
@@ -41,13 +41,5 @@
       "debugApplicationIdSuffix": ".debug"
     }
   },
-  "plugins": {
-    "updater": {
-      "active": true,
-      "endpoints": [
-        "https://github.com/ChungHJ96/EasyPaper/releases/latest/download/latest.json"
-      ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFBRDU1NEI3OEMwODA3OEMKUldTTUJ3aU10MVRWcXBra1krUnd2QlNCaTdDVUlzQnZLRWl4NDQrM1huTzgzb1c5V2IwdGdBSzUK"
-    }
-  }
+  "plugins": {}
 }

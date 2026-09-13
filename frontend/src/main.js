@@ -35,6 +35,12 @@ import { renderChapterSummaryHtml, renderFullSummaryHtml } from './chapterSummar
 const i18nReady = initI18n()
 applyUiScale(loadUiScale())
 
+if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+  import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {
+    getCurrentWindow().setTitle('HJPaper')
+  }).catch(() => {})
+}
+
 
 // ── 글로벌 API 인터셉터 (인증 만료/실패 대응) ─────────
 const originalFetch = window.fetch
@@ -3058,13 +3064,10 @@ async function checkAuthentication() {
     // 애초에 의미가 없으므로 건너뛴다(데스크탑 자체 업데이트는 Tauri updater가
     // 별도로 담당).
     if (!isTauriDesktop) {
-      checkPostUpdateNoticeOnce().then((shown) => {
-        if (!shown) maybeAutoCheckForUpdate()
-      })
+      // HJPaper: 웹/데스크탑 자동 업데이트 비활성화
     } else {
       loadTauriAppVersion()
-      maybeCheckTauriUpdateIfDue()
-      startTauriUpdatePolling()
+      // HJPaper: 데스크탑 자동 업데이트 비활성화
     }
   } else {
     showLogin()
@@ -4316,7 +4319,7 @@ async function changeProviderAndModel(type, newProvider, newModel) {
   }
 }
 
-// ── EasyPaper 설정 모달 이벤트 ──────────────────────────
+// ── HJPaper 설정 모달 이벤트 ──────────────────────────
 globalSettingsBtn.addEventListener('click', async () => {
   await loadFeatureNamespaces('settings')
   syncUiScaleControl(settingUiScale)
@@ -4873,22 +4876,16 @@ const TAURI_UPDATE_DUE_CHECK_TICK_MS = 60 * 60 * 1000 // 1시간
 let tauriUpdatePollingTimer = null
 
 async function maybeCheckTauriUpdateIfDue() {
-  const interval = getTauriUpdateCheckInterval()
-  if (interval === 'never') return
-  const intervalMs = UPDATE_CHECK_INTERVAL_MS[interval] || UPDATE_CHECK_INTERVAL_MS.weekly
-  const lastCheckedAt = Number(localStorage.getItem(TAURI_UPDATE_LAST_CHECKED_STORAGE_KEY) || 0)
-  const dueNow = !lastCheckedAt || (Date.now() - lastCheckedAt) >= intervalMs
-  if (!dueNow) return
-  await checkTauriUpdate({ silent: true })
+  // HJPaper: 데스크탑 자동 업데이트 비활성화
+  return
 }
 
 function startTauriUpdatePolling() {
   if (tauriUpdatePollingTimer) clearInterval(tauriUpdatePollingTimer)
-  tauriUpdatePollingTimer = setInterval(maybeCheckTauriUpdateIfDue, TAURI_UPDATE_DUE_CHECK_TICK_MS)
 }
 
 if (isTauriDesktop && tauriUpdateSection) {
-  tauriUpdateSection.classList.remove('hidden')
+  tauriUpdateSection.classList.add('hidden')
 }
 
 async function loadTauriAppVersion() {
@@ -4913,58 +4910,10 @@ function resetTauriUpdateState() {
 
 async function checkTauriUpdate({ silent = false } = {}) {
   if (!isTauriDesktop) return
-  localStorage.setItem(TAURI_UPDATE_LAST_CHECKED_STORAGE_KEY, String(Date.now()))
   resetTauriUpdateState()
-  if (!silent && tauriUpdateCheckBtn) {
-    tauriUpdateCheckBtn.disabled = true
-    tauriUpdateCheckBtn.innerHTML = icon('refreshCw', 13, 'style="vertical-align:-2px;margin-right:4px"') + '확인 중...'
-  }
   if (!silent && tauriUpdateStatus) {
     tauriUpdateStatus.style.color = 'var(--text-secondary)'
-    tauriUpdateStatus.textContent = ''
-  }
-
-  try {
-    const { check } = await import('@tauri-apps/plugin-updater')
-    const update = await check()
-    if (update) {
-      pendingTauriUpdate = update
-      if (tauriUpdateVersionLine) {
-        tauriUpdateVersionLine.textContent = `v${update.currentVersion} → v${update.version}`
-      }
-      if (tauriUpdateNotes) {
-        tauriUpdateNotes.textContent = update.body || '세부 변경 내역이 제공되지 않았습니다.'
-      }
-      if (tauriUpdateNotesBox) tauriUpdateNotesBox.classList.remove('hidden')
-      if (tauriUpdateInstallBtn) {
-        tauriUpdateInstallBtn.disabled = false
-        tauriUpdateInstallBtn.classList.remove('hidden')
-      }
-      if (tauriUpdateStatus) {
-        tauriUpdateStatus.style.color = '#10b981'
-        tauriUpdateStatus.textContent = '새 업데이트가 있습니다.'
-      }
-      // 백그라운드(로그인 직후/주기적 재확인) 체크일 때만 팝업으로 알림 -
-      // 사용자가 설정 화면에서 직접 확인 버튼을 눌렀을 때는 이미 결과가
-      // 그 자리에 보이므로 팝업까지 겹쳐 띄우지 않는다.
-      if (silent && update.version !== lastNotifiedTauriUpdateVersion) {
-        lastNotifiedTauriUpdateVersion = update.version
-        showTauriUpdateAvailableModal(update)
-      }
-    } else if (tauriUpdateStatus) {
-      tauriUpdateStatus.style.color = 'var(--text-secondary)'
-      tauriUpdateStatus.textContent = '이미 최신 버전입니다.'
-    }
-  } catch (err) {
-    if (tauriUpdateStatus) {
-      tauriUpdateStatus.style.color = '#ef4444'
-      tauriUpdateStatus.textContent = '업데이트 확인 실패: ' + (err.message || err)
-    }
-  } finally {
-    if (tauriUpdateCheckBtn) {
-      tauriUpdateCheckBtn.disabled = false
-      tauriUpdateCheckBtn.innerHTML = icon('checkCircle', 13, 'style="vertical-align:-2px;margin-right:4px"') + '업데이트 확인'
-    }
+    tauriUpdateStatus.textContent = '이미 최신 버전입니다.'
   }
 }
 
@@ -5355,34 +5304,8 @@ if (updateAvailableNowBtn) {
 // 설정된 주기(매일/매주)가 지났으면 원격 저장소를 확인해 새 버전이 있는지 확인하고,
 // 있으면 변경 로그와 함께 안내 팝업을 띄운다. "사용 안 함"이면 절대 확인하지 않는다.
 async function maybeAutoCheckForUpdate() {
-  try {
-    const cfg = await getUpdateCheckConfigAPI()
-    if (settingUpdateCheckInterval) settingUpdateCheckInterval.value = cfg.interval || 'weekly'
-    if (cfg.interval === 'never') return
-
-    const intervalMs = UPDATE_CHECK_INTERVAL_MS[cfg.interval] || UPDATE_CHECK_INTERVAL_MS.weekly
-    const lastCheckedAt = cfg.last_checked_at ? new Date(cfg.last_checked_at).getTime() : 0
-    const dueNow = !lastCheckedAt || (Date.now() - lastCheckedAt) >= intervalMs
-    if (!dueNow) return
-
-    const result = await checkForUpdateAPI()
-    if (currentVersionLabel && result.current_version) {
-      currentVersionLabel.textContent = `현재 버전: ${formatVersionLabel(result.current_version, result.current_version_date)}`
-    }
-    if (!result.ok || !result.update_available) return
-
-    if (updateAvailableVersionLine) {
-      updateAvailableVersionLine.textContent = `${formatVersionLabel(result.current_version, result.current_version_date)} → ${formatVersionLabel(result.latest_version, result.latest_version_date)}`
-    }
-    renderChangelogList(updateAvailableChangelog, result.changelog)
-    if (updateAvailableProgressArea) updateAvailableProgressArea.classList.add('hidden')
-    if (updateAvailableActions) updateAvailableActions.style.display = 'flex'
-    if (updateAvailableNowBtn) updateAvailableNowBtn.disabled = false
-    if (updateAvailableLaterBtn) updateAvailableLaterBtn.disabled = false
-    if (updateAvailableModal) openOverlayModal(updateAvailableModal)
-  } catch (err) {
-    console.warn('자동 업데이트 확인 실패:', err)
-  }
+  // HJPaper: 웹/데스크탑 자동 업데이트 비활성화
+  return
 }
 
 // 직전 재시작으로 버전이 바뀌었다면(=방금 업데이트 적용됨) 변경 로그와 함께
@@ -10852,6 +10775,7 @@ async function syncDesktopWindowTheme(isLight) {
   try {
     const { getCurrentWindow } = await import('@tauri-apps/api/window')
     const win = getCurrentWindow()
+    await win.setTitle('HJPaper')
     await win.setTheme(isLight ? 'light' : 'dark')
     await win.setBackgroundColor(isLight ? LIGHT_THEME_BG : DARK_THEME_BG)
   } catch (err) {

@@ -762,7 +762,7 @@
 
       <div style="padding: 24px; max-height: 70vh; overflow-y: auto;">
         <div id="onboarding-purpose" class="hidden">
-          <h3 data-i18n="onboarding:purpose.heading">EasyPaper를 어떤 용도로 사용하시나요?</h3>
+          <h3 data-i18n="onboarding:purpose.heading">HJPaper를 어떤 용도로 사용하시나요?</h3>
           <p class="onboarding-purpose-help" data-i18n="onboarding:purpose.help">기본 작업공간만 정하며 문서를 자동 분류하지 않습니다. 나중에 사이드바에서 언제든 변경할 수 있습니다.</p>
           <div class="onboarding-purpose-cards" role="radiogroup">
             <button type="button" data-purpose-mode="research" role="radio" aria-checked="false"><strong data-i18n="onboarding:purpose.research">연구 논문 중심</strong><span data-i18n="onboarding:purpose.researchHelp">논문 번역, 읽기 전 브리핑, 논문 비교, Research Graph</span></button>
@@ -871,7 +871,7 @@
   </div>
 
   <!-- 새 버전 업데이트 안내 모달 -->
-  <div id="update-available-modal" class="modal-overlay hidden">
+  <div id="update-available-modal" class="modal-overlay hidden" style="display: none !important;">
     <div class="modal-content" style="max-width: 440px;">
       <div class="modal-header">
         <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></svg>새 업데이트가 있습니다</h2>
@@ -897,7 +897,7 @@
   </div>
 
   <!-- 업데이트 완료 안내 모달 (업데이트 직후 1회만 표시) -->
-  <div id="update-complete-modal" class="modal-overlay hidden">
+  <div id="update-complete-modal" class="modal-overlay hidden" style="display: none !important;">
     <div class="modal-content" style="max-width: 440px;">
       <div class="modal-header">
         <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px; color: var(--success);"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>새 버전으로 업데이트되었습니다</h2>
@@ -918,19 +918,18 @@
 
   <!-- 전체 변경 이력(CHANGELOG.md) 모달 - 설정 화면의 버전 텍스트 클릭 시 표시 -->
   <div id="full-changelog-modal" class="modal-overlay hidden">
-    <div class="modal-content" style="max-width: 520px;">
+    <div class="modal-content" style="max-width: 580px;">
       <div class="modal-header">
-        <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>전체 변경 이력</h2>
+        <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>전체 변경 이력</h2>
         <button id="full-changelog-close-btn" class="close-btn">&times;</button>
       </div>
-      <div style="padding: 24px; max-height: 70vh; overflow-y: auto;">
         <div id="full-changelog-loading" style="font-size: 12.5px; color: var(--text-muted); text-align: center; padding: 20px 0;">불러오는 중...</div>
         <div id="full-changelog-content" class="full-changelog-content hidden"></div>
       </div>
     </div>
   </div>
 
-  <!-- EasyPaper 통합 설정 모달 -->
+  <!-- HJPaper 통합 설정 모달 -->
   <div id="settings-modal" class="modal-overlay hidden">
     <div class="modal-content settings-dialog">
       <div class="modal-header">
@@ -1480,35 +1479,24 @@
       <div id="tab-info" class="tab-pane">
         <div class="modal-form">
           <div class="form-group">
-            <label>EasyPaper 프로젝트</label>
+            <label>HJPaper 프로젝트</label>
             <div style="background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: var(--radius-md); padding: 14px 16px; margin-bottom: 12px;">
               <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink: 0; color: var(--text-primary);"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.084-.729.084-.729 1.205.084 1.838 1.238 1.838 1.238 1.07 1.834 2.809 1.304 3.495.997.108-.775.42-1.305.763-1.605-2.665-.303-5.467-1.334-5.467-5.93 0-1.31.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23a11.5 11.5 0 0 1 3.003-.404c1.02.005 2.047.138 3.005.404 2.29-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.814 1.103.814 2.222 0 1.606-.015 2.898-.015 3.293 0 .32.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
                 <div style="min-width: 0;">
-                  <div style="font-size: 14px; font-weight: 600; color: var(--text-primary);">orion-gz / EasyPaper</div>
+                  <div style="font-size: 14px; font-weight: 600; color: var(--text-primary);">HJPaper</div>
                   <div style="font-size: 12px; color: var(--text-secondary); margin-top: 2px;">학술 PDF 논문을 AI로 번역하고, 논문 내용을 바탕으로 바로 대화하는 통합 웹 서비스</div>
                 </div>
-              </div>
-              <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-                <a href="https://github.com/orion-gz/EasyPaper" target="_blank" rel="noopener noreferrer" class="btn btn-secondary" style="text-decoration: none; display: inline-flex; align-items: center; gap: 4px; padding: 8px 14px; font-size: 12.5px;">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>저장소 방문
-                </a>
-                <a href="https://github.com/orion-gz/EasyPaper/issues" target="_blank" rel="noopener noreferrer" class="btn btn-secondary" style="text-decoration: none; display: inline-flex; align-items: center; gap: 4px; padding: 8px 14px; font-size: 12.5px;">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>버그 제보
-                </a>
-                <a href="https://github.com/orion-gz/EasyPaper/pulls" target="_blank" rel="noopener noreferrer" class="btn btn-secondary" style="text-decoration: none; display: inline-flex; align-items: center; gap: 4px; padding: 8px 14px; font-size: 12.5px;">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M11 18H8a2 2 0 0 1-2-2V9"/></svg>기여하기
-                </a>
               </div>
             </div>
           </div>
 
-          <div id="system-update-section" class="form-group">
+          <div id="system-update-section" class="form-group" style="display: none !important;">
             <label>시스템 업데이트 (System Update)</label>
             <div style="background: rgba(139, 92, 246, 0.1); border-left: 4px solid var(--accent-mid); padding: 12px 14px; border-radius: var(--radius-sm); margin-bottom: 12px; font-size: 12.5px; color: var(--text-primary); line-height: 1.6;">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg><strong>GitHub 최신 업데이트 확인 및 자동 빌드:</strong><br>
               아래 버튼을 누르면 GitHub 저장소로부터 최신 코드를 풀(Pull) 받고,<br>
-              변경된 내용이 있을 경우 프론트엔드를 자동 빌드한 뒤 EasyPaper 데몬 서비스를 즉시 재기동합니다.
+              변경된 내용이 있을 경우 프론트엔드를 자동 빌드한 뒤 HJPaper 데몬 서비스를 즉시 재기동합니다.
             </div>
             <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px;">
               <div style="display: flex; align-items: center; gap: 8px;">
@@ -1536,7 +1524,7 @@
             </div>
           </div>
 
-          <div id="tauri-update-section" class="form-group hidden">
+          <div id="tauri-update-section" class="form-group hidden" style="display: none !important;">
             <label>앱 업데이트 (App Update)</label>
             <div style="background: rgba(139, 92, 246, 0.1); border-left: 4px solid var(--accent-mid); padding: 12px 14px; border-radius: var(--radius-sm); margin-bottom: 12px; font-size: 12.5px; color: var(--text-primary); line-height: 1.6;">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg><strong>데스크탑 앱 업데이트:</strong><br>

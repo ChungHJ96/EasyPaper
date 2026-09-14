@@ -11,12 +11,12 @@ const recovered = [
 ]
 const geometryPdf = fs.readFileSync(new URL('./fixtures/text-geometry.pdf', import.meta.url))
 
-async function openRecovered(page, pdf, spans, recovery = 'ocr', sources = []) {
+async function openRecovered(page, pdf, spans, recovery = 'ocr', sources = [], translations = []) {
   const document = { id: 'recovered', filename: 'recovered.pdf', total_pages: 1,
     metadata: { title: 'Recovered text' }, translated_pages: sources.length ? [1] : [] }
   await mockBaseRoutes(page, { documents: [document] })
   if (sources.length) {
-    const sentences = sources.map((src, i) => ({ src, trans: `번역문 ${i + 1}입니다.` }))
+    const sentences = sources.map((src, i) => ({ src, trans: translations[i] || `번역문 ${i + 1}입니다.` }))
     await page.route('**/api/library/recovered/translation/1**', route => route.fulfill({ json: {
       translation: sentences.map(s => s.trans).join('\n\n'), sentences,
     } }))
@@ -113,6 +113,64 @@ for (const uiScale of [0.8, 1.25]) {
     })
   }
 }
+
+for (const matched of [true, false]) {
+  test(`cached Japanese paragraphs focus individual sentences (matched translation: ${matched})`, async ({ page }) => {
+    await enableFocus(page, 1, 125)
+    const lines = ['最初の文です。', '次の文です。', '最後の文です。']
+    const translations = matched ? ['첫 번째입니다. 두 번째입니다. 마지막입니다.'] : ['문단을 합쳐 번역한 결과입니다.']
+    await openRecovered(page, geometryPdf, lines.map((text, row) => ({
+      text, bbox: [72, 100 + row * 35, 240, 116 + row * 35], hasEOL: true,
+    })), 'ocr', [lines.join('')], translations)
+    // One cached mapping ID remains, even while Focus subdivides it.
+    await expect(page.locator('.trans-sentence').first()).toBeVisible()
+    expect(await page.locator('.trans-sentence').evaluateAll(els => [...new Set(els.map(e => e.dataset.sentenceIdx))])).toEqual(['0'])
+    const source = page.locator('.focus-mode-magnification[data-kind="source"]')
+    for (const line of lines) {
+      const glyph = page.locator('.textLayer span').filter({ hasText: line }).first()
+      await glyph.hover()
+      await expect(source.locator('canvas')).toHaveCount(1)
+      const target = await glyph.boundingBox(), focused = await source.boundingBox()
+      expect(Math.abs(focused.y + focused.height / 2 - target.y - target.height / 2)).toBeLessThan(8)
+    }
+    if (matched) {
+      const target = await page.locator('.trans-sentence').first().evaluate(el => {
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          const start = node.nodeValue.indexOf('두 번째')
+          if (start < 0) continue
+          const range = document.createRange(); range.setStart(node, start); range.setEnd(node, start + 2)
+          const r = range.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+        }
+      })
+      await page.mouse.move(target.x, target.y)
+      await expect(source.locator('canvas')).toHaveCount(1)
+      const middle = await page.locator('.textLayer span').filter({ hasText: lines[1] }).first().boundingBox()
+      await expect.poll(async () => Math.abs((await source.boundingBox()).y - middle.y)).toBeLessThan(8)
+    }
+    await page.locator('.textLayer span').filter({ hasText: lines[1] }).first().click()
+    await expect(source.locator('canvas')).toHaveCount(1)
+    await page.keyboard.press('ArrowRight')
+    await expect(source.locator('canvas')).toHaveCount(1)
+    const last = await page.locator('.textLayer span').filter({ hasText: lines[2] }).first().boundingBox()
+    await expect.poll(async () => Math.abs((await source.boundingBox()).y - last.y)).toBeLessThan(8)
+    await page.keyboard.press('Escape')
+    await expect(page.locator('.focus-mode-layer')).toHaveCount(0)
+  })
+}
+
+test('cached textbook paragraph focuses its first sentence without retranslating', async ({ page }) => {
+  test.skip(!process.env.EASYPAPER_TEST_MAPPING_FIXTURE, 'User PDF is not redistributed')
+  const root = process.env.EASYPAPER_TEST_MAPPING_FIXTURE
+  const data = JSON.parse(fs.readFileSync(`${root}.json`, 'utf8'))
+  await enableFocus(page, 1, 125)
+  await openRecovered(page, fs.readFileSync(`${root}.pdf`), data.text_layer, 'ocr', data.text.split(/\n\s*\n/).filter(Boolean))
+  await page.locator('.textLayer span').filter({ hasText: /^1960$/ }).first().hover()
+  const crops = page.locator('.focus-mode-magnification[data-kind="source"] canvas')
+  await expect(crops.first()).toBeVisible()
+  expect(await crops.count()).toBeLessThanOrEqual(2)
+  await page.screenshot({ path: '/tmp/easypaper-cjk-sentence-focus.png', fullPage: true })
+})
 
 test('Focus enlarges the original Japanese textbook paragraph as two complete lines', async ({ page }) => {
   test.skip(!process.env.EASYPAPER_TEST_MAPPING_FIXTURE, 'User PDF is not redistributed')

@@ -114,13 +114,13 @@ def split_into_sentences(text: str) -> List[str]:
     sentence_ranges = []
     for para in paras:
         last_index = 0
-        cand_regex = re.compile(r'([.!?]+)([ \t\n\r]+)')
+        cand_regex = re.compile(r'([。！？]+[」』”’）】》〉]*)([ \t\n\r]*)|([.!?]+)([ \t\n\r]+)')
         matches = list(cand_regex.finditer(para))
         
         for match in matches:
-            punc_index = match.start(1)
-            punc = match.group(1)
-            whitespace = match.group(2)
+            punc_index = match.start()
+            punc = match.group(1) or match.group(3)
+            whitespace = (match.group(2) if match.group(1) else match.group(4))
             next_index = punc_index + len(punc) + len(whitespace)
             
             if next_index >= len(para):

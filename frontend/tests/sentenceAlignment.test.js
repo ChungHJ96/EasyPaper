@@ -163,3 +163,17 @@ test('비순차 캡션과 매칭 실패 본문이 함께 존재할 때 문장부
     assert.ok(sorted[i].start >= sorted[i - 1].end)
   }
 })
+
+test('merged alignment preserves multilingual out-of-order captions and raw punctuation', () => {
+  const caption = '図１。𠮷野家の実験結果と測定データです。'
+  const body = 'Café observations retain the oﬃce measurements.'
+  const fullText = `${caption} ${body}`
+  const result = alignSentencesToText(fullText, [
+    'Café observations retain the office measurements.',
+    '図1。𠮷野家の実験結果と測定データです。',
+  ])
+  assert.equal(result[0].priority, 3)
+  assert.equal(result[1].priority, 3)
+  assert.equal(fullText.slice(result[0].start, result[0].end), body)
+  assert.equal(fullText.slice(result[1].start, result[1].end), caption)
+})

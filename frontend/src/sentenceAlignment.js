@@ -1,3 +1,5 @@
+import { normalizePdfText } from './pdfSentenceGeometry.js';
+
 /**
  * 문장 정렬 및 텍스트 매핑 모듈
  * 
@@ -49,15 +51,7 @@ const LATEX_SYMBOL_MAP = {
   'pm': '±', 'mp': '∓'
 };
 
-const SUPER_SUB_MAP = {
-  '⁰': '0', '¹': '1', '²': '2', '³': '3', '⁴': '4', '⁵': '5', '⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9',
-  '⁺': '+', '⁻': '-', '⁼': '=', '⁽': '(', '⁾': ')', 'ⁿ': 'n', 'ⁱ': 'i',
-  '₀': '0', '₁': '1', '₂': '2', '₃': '3', '₄': '4', '₅': '5', '₆': '6', '₇': '7', '₈': '8', '₉': '9',
-  '₊': '+', '₋': '-', '₌': '=', '₍': '(', '₎': ')',
-  'ₐ': 'a', 'ₑ': 'e', 'ₒ': 'o', 'ₓ': 'x', 'ₕ': 'h', 'ₖ': 'k', 'ₗ': 'l', 'ₘ': 'm', 'ₙ': 'n', 'ₚ': 'p', 'ₛ': 's', 'ₜ': 't'
-};
-
-const VALID_CHAR_REGEX = /[a-zA-Z0-9\u3131-\uD79D\u4e00-\u9fff\u0370-\u03ff\u2200-\u22ff\u2190-\u21ff\u00d7\u00f7\u00b1\u00b7]/;
+const VALID_CHAR_REGEX = /[\p{L}\p{M}\p{N}\u2200-\u22ff\u2190-\u21ff\u00d7\u00f7\u00b1\u00b7]/u;
 
 /**
  * 빈 구간(gap) 내에서 앞뒤 문장부호/공백을 제외한 실질적인 문자 범위를 계산합니다.
@@ -95,7 +89,7 @@ function extractSubstantiveGap(gap, fullText) {
  */
 function extractSubstantiveWords(str) {
   if (!str) return [];
-  return str.toLowerCase().match(/[a-z0-9\u3131-\uD79D\u4e00-\u9fff\u0370-\u03ff]{2,}/g) || [];
+  return str.toLowerCase().match(/[\p{L}\p{M}\p{N}]{2,}/gu) || [];
 }
 
 /**
@@ -202,18 +196,7 @@ export function alignSentencesToText(fullText, sentencesList, pageNum = '?') {
     return (sentencesList || []).map(s => ({ text: s || '', start: 0, end: 0 }));
   }
 
-  const cleanToRaw = [];
-  let cleanText = '';
-
-  for (let i = 0; i < fullText.length; i++) {
-    let char = fullText[i];
-    char = SUPER_SUB_MAP[char] || char;
-    // 알파벳, 숫자, 한글, 한자, 그리스 문자 및 수학 기호/연산자 매칭
-    if (VALID_CHAR_REGEX.test(char)) {
-      cleanToRaw.push(i);
-      cleanText += char.toLowerCase();
-    }
-  }
+  const { clean: cleanText, starts: cleanToRaw, ends: cleanToRawEnd } = normalizePdfText(fullText, { includeMathSymbols: true });
 
   const sentenceRanges = [];
   let searchStart = 0;
@@ -242,15 +225,7 @@ export function alignSentencesToText(fullText, sentencesList, pageNum = '?') {
     // 5. 기타 남은 백슬래시 LaTeX 명령어 제거
     text = text.replace(/\\[a-zA-Z]+/g, '');
 
-    let clean = '';
-    for (let i = 0; i < text.length; i++) {
-      let char = text[i];
-      char = SUPER_SUB_MAP[char] || char;
-      if (VALID_CHAR_REGEX.test(char)) {
-        clean += char.toLowerCase();
-      }
-    }
-    return clean;
+    return normalizePdfText(text, { includeMathSymbols: true }).clean;
   });
 
   for (let k = 0; k < cleanSents.length; k++) {
@@ -294,7 +269,7 @@ export function alignSentencesToText(fullText, sentencesList, pageNum = '?') {
       if (candIdx !== -1) {
         const candRawStart = cleanToRaw[candIdx] ?? 0;
         const candLastIdx = Math.min(cleanText.length, candIdx + cleanSent.length) - 1;
-        const candRawEnd = (cleanToRaw[candLastIdx] !== undefined) ? cleanToRaw[candLastIdx] + 1 : fullText.length;
+        const candRawEnd = (cleanToRawEnd[candLastIdx] !== undefined) ? cleanToRawEnd[candLastIdx] : fullText.length;
         // 기존 매칭된 문장 범위와 충돌(오버랩)하는지 검사
         const overlaps = sentenceRanges.some(r => r.end > r.start && Math.max(candRawStart, r.start) < Math.min(candRawEnd, r.end));
         if (!overlaps) {
@@ -310,9 +285,20 @@ export function alignSentencesToText(fullText, sentencesList, pageNum = '?') {
       const cleanEnd = Math.min(cleanText.length, idx + cleanSent.length);
       const rawStart = cleanToRaw[cleanStart] ?? (cleanToRaw[cleanToRaw.length - 1] ?? 0);
       const lastCleanIdx = cleanEnd - 1;
-      const rawEnd = (cleanToRaw[lastCleanIdx] !== undefined)
-        ? cleanToRaw[lastCleanIdx] + 1
+      let rawEnd = (cleanToRawEnd[lastCleanIdx] !== undefined)
+        ? cleanToRawEnd[lastCleanIdx]
         : (cleanToRaw[cleanToRaw.length - 1] ?? fullText.length);
+
+      // Preserve sentence-final punctuation and OCR-inserted spacing from main.
+      const suffix = sText.match(/[^\p{L}\p{M}\p{N}\s]+\s*$/u)?.[0]?.trim();
+      if (suffix) {
+        let cursor = rawEnd;
+        for (const char of suffix) {
+          while (/\s/u.test(fullText[cursor] || '') && cursor < fullText.length) cursor++;
+          if (fullText[cursor] !== char) break;
+          rawEnd = ++cursor;
+        }
+      }
 
       sentenceRanges.push({
         origIndex: k,

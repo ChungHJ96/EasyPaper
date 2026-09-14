@@ -216,7 +216,16 @@ export function createFocusMagnification(pair, viewportRects, scale) {
       const left = Math.max(rect.left, view.left, limits.left), top = Math.max(rect.top, view.top, limits.top)
       const right = Math.min(rect.right, view.left + view.width, limits.right), bottom = Math.min(rect.bottom, view.top + view.height, limits.bottom)
       return { left, top, right, bottom, width: right - left, height: bottom - top }
-    })).filter(rect => rect.width > 0 && rect.height > 0)
+    })).filter(rect => rect.width > 0 && rect.height > 0).filter((rect, index, all) => {
+      // Adjacent OCR lines can overlap vertically. Clipping each line against
+      // all visible openings also yields thin intersections already contained
+      // in a full line. Do not paint those strips again as separate crops.
+      return !all.some((other, otherIndex) => otherIndex !== index
+        && other.left <= rect.left && other.top <= rect.top
+        && other.right >= rect.right && other.bottom >= rect.bottom
+        && (otherIndex < index || other.left < rect.left || other.top < rect.top
+          || other.right > rect.right || other.bottom > rect.bottom))
+    })
     if (!visible.length) return
     const left = Math.min(...visible.map(r => r.left)), top = Math.min(...visible.map(r => r.top))
     const width = Math.max(...visible.map(r => r.right)) - left, height = Math.max(...visible.map(r => r.bottom)) - top

@@ -73,6 +73,59 @@ for (const scale of [0.8, 1.25]) {
   })
 }
 
+async function enableFocus(page, uiScale, focusScale) {
+  await page.setViewportSize({ width: 1600, height: 1200 })
+  await page.addInitScript(({ uiScale, focusScale }) => {
+    localStorage.setItem('easypaper_ui_scale', String(uiScale))
+    localStorage.setItem('easypaper_focus_mode_enabled_research', 'true')
+    localStorage.setItem('easypaper_focus_scale_research', String(focusScale))
+    localStorage.setItem('easypaper_disable_hover_tooltip', 'true')
+  }, { uiScale, focusScale })
+}
+
+for (const uiScale of [0.8, 1.25]) {
+  for (const focusScale of [100, 125]) {
+    test(`Focus keeps OCR lines continuous at UI ${uiScale}, magnification ${focusScale}`, async ({ page }) => {
+      await enableFocus(page, uiScale, focusScale)
+      const lines = ['日本語の文章です。', 'ひらがなもつながります。', '次の文は別です。']
+      const spans = lines.flatMap((line, row) => [...line].map((text, col) => ({
+        // Tight line spacing makes OCR font rectangles overlap vertically.
+        text, bbox: [72 + col * 16, 100 + row * 15 + col % 3 * 2, 84 + col * 16, 116 + row * 15],
+        hasEOL: col === [...line].length - 1,
+      })))
+      await openRecovered(page, geometryPdf, spans, 'ocr', [lines.slice(0, 2).join(' '), lines[2]])
+      const translated = page.locator('.trans-sentence[data-sentence-idx="0"]').first()
+      await translated.hover()
+      // Two source lines and one translated line, with no glyph-sized holes.
+      await expect(page.locator('.focus-tint-hole')).toHaveCount(3)
+      if (focusScale > 100) {
+        const source = page.locator('.focus-mode-magnification[data-kind="source"]')
+        await expect(source.locator('canvas')).toHaveCount(2)
+        const sizes = await source.evaluate(el => el.focusRects.map(r => r.width))
+        expect(Math.min(...sizes)).toBeGreaterThan(100)
+      }
+      // Pin and resize also use continuous line geometry.
+      await translated.click()
+      await page.setViewportSize({ width: 1500, height: 1100 })
+      await expect(page.locator('.focus-tint-hole')).toHaveCount(3)
+      await page.keyboard.press('Escape')
+      await expect(page.locator('.focus-mode-layer')).toHaveCount(0)
+    })
+  }
+}
+
+test('Focus enlarges the original Japanese textbook paragraph as two complete lines', async ({ page }) => {
+  test.skip(!process.env.EASYPAPER_TEST_MAPPING_FIXTURE, 'User PDF is not redistributed')
+  const root = process.env.EASYPAPER_TEST_MAPPING_FIXTURE
+  const data = JSON.parse(fs.readFileSync(`${root}.json`, 'utf8'))
+  await enableFocus(page, 1, 125)
+  await openRecovered(page, fs.readFileSync(`${root}.pdf`), data.text_layer, 'ocr', data.text.split(/\n\s*\n/).filter(Boolean))
+  await page.locator('.trans-sentence[data-sentence-idx="2"]').first().hover()
+  await expect(page.locator('.focus-mode-magnification[data-kind="source"] canvas')).toHaveCount(2)
+  await expect(page.locator('.focus-tint-hole')).toHaveCount(3)
+  await page.screenshot({ path: '/tmp/easypaper-japanese-focus-unified.png', fullPage: true })
+})
+
 test('translation hover and click include source fragments on both sides of an equation', async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1200 })
   const lines = ['We begin here.', 'x = y + 1', 'Then we finish here.']

@@ -17290,7 +17290,12 @@ function focusPairRects(ref) {
   const idx = ref.sentenceIdx >= 10000 ? (sentenceRange?.originalSentenceIdx ?? ref.sentenceIdx) : ref.sentenceIdx
   const translationRects = []
   viewerScrollContainer.querySelectorAll(`.trans-sentence[data-page="${ref.pageNum}"][data-sentence-idx="${idx}"]`).forEach(element => translationRects.push(...visibleFocusRects(element)))
-  return { sourceRects, translationRects, sourceCanvas: viewerScrollContainer.querySelector(`.pdf-page-wrapper[data-page="${ref.pageNum}"] canvas`), elements: Array.from(viewerScrollContainer.querySelectorAll(`.trans-sentence[data-page="${ref.pageNum}"][data-sentence-idx="${idx}"]`)) }
+  // Focus crops, blur openings and tint must share the same continuous source
+  // lines as hover highlights. Keep viewport coordinates for the fixed layer.
+  const sourceLineRects = mergePdfHighlightRects(sourceRects).map(rect => ({
+    ...rect, right: rect.left + rect.width, bottom: rect.top + rect.height,
+  }))
+  return { sourceRects: sourceLineRects, translationRects, sourceCanvas: viewerScrollContainer.querySelector(`.pdf-page-wrapper[data-page="${ref.pageNum}"] canvas`), elements: Array.from(viewerScrollContainer.querySelectorAll(`.trans-sentence[data-page="${ref.pageNum}"][data-sentence-idx="${idx}"]`)) }
 }
 
 function listFocusSentences() {

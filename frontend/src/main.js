@@ -1,6 +1,7 @@
 import './style.css'
 import { applyDesktopUpdate } from './desktopUpdate.js'
 import { pageCoordinates } from './pdfCoordinates.js'
+import { normalizePdfText, mergePdfHighlightRects, mappedSentenceRange } from './pdfSentenceGeometry.js'
 import './styles/shell.css'
 import './styles/library-page.css'
 import './styles/research-graph.css'
@@ -13261,6 +13262,47 @@ document.addEventListener('mouseup', (e) => {
 })
 
 // Browser zoom and UI scale can change DOM font advances without a PDF rerender.
+// Draw native selections as continuous line boxes without changing the Range,
+// text nodes, copy offsets, or keyboard selection behaviour.
+let pdfSelectionFrame = 0;
+function schedulePdfSelectionOverlay() {
+  if (pdfSelectionFrame) return;
+  pdfSelectionFrame = requestAnimationFrame(() => {
+    pdfSelectionFrame = 0;
+    viewerScrollContainer.querySelectorAll('.sentence-selection-box').forEach(el => el.remove());
+    viewerScrollContainer.querySelectorAll('.pdf-box-selection').forEach(el => el.classList.remove('pdf-box-selection'));
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || !selection.rangeCount) return;
+    const selected = selection.getRangeAt(0);
+    for (const layer of viewerScrollContainer.querySelectorAll('.textLayer')) {
+      if (!selected.intersectsNode(layer)) continue;
+      const coordinates = pageCoordinates(layer.closest('.pdf-page-inner') || layer);
+      const rects = [];
+      const walker = document.createTreeWalker(layer, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (!selected.intersectsNode(node)) continue;
+        const part = document.createRange();
+        part.selectNodeContents(node);
+        if (selected.compareBoundaryPoints(Range.START_TO_START, part) > 0) part.setStart(selected.startContainer, selected.startOffset);
+        if (selected.compareBoundaryPoints(Range.END_TO_END, part) < 0) part.setEnd(selected.endContainer, selected.endOffset);
+        if (!part.collapsed) {
+          for (const rect of part.getClientRects()) {
+            if (rect.width > 0 && rect.height > 0) rects.push(coordinates.rectToLocal(rect));
+          }
+        }
+      }
+      const boxes = mergePdfHighlightRects(rects);
+      if (boxes.length) {
+        const overlay = getOrCreateOverlay(layer.closest('.pdf-page-wrapper'));
+        clearOverlayBoxes(overlay, 'sentence-hover-box', 'sentence-equation-box');
+        renderSentenceOverlay(overlay, boxes, 'sentence-selection-box');
+        layer.classList.add('pdf-box-selection');
+      }
+    }
+  });
+}
+document.addEventListener('selectionchange', schedulePdfSelectionOverlay);
+
 let pdfGeometryRefreshTimer
 function schedulePdfGeometryRefresh() {
   clearTimeout(pdfGeometryRefreshTimer)
@@ -13277,6 +13319,7 @@ function schedulePdfGeometryRefresh() {
         if (active) applyActiveHighlight(pageNum, active)
       }
     })
+    schedulePdfSelectionOverlay()
   }, 100)
 }
 window.addEventListener('resize', schedulePdfGeometryRefresh)
@@ -15963,17 +16006,7 @@ function segmentElementIntoSentences(container, pageNum, className) {
 
 // 주어진 텍스트에서 원문 문장들의 정확한 문자 범위(start, end)를 유니코드 인지 방식으로 추출하여 매핑합니다.
 function alignSentencesToText(fullText, sentencesList, pageNum = '?') {
-  const cleanToRaw = [];
-  let cleanText = '';
-
-  for (let i = 0; i < fullText.length; i++) {
-    const char = fullText[i];
-    // 알파벳, 숫자, 한글, 한자 및 그리스 문자(수식 기호 대응)만 비교 대상으로 삼음
-    if (/[a-zA-Z0-9\u3131-\uD79D\u4e00-\u9fff\u0370-\u03ff]/.test(char)) {
-      cleanToRaw.push(i);
-      cleanText += char.toLowerCase();
-    }
-  }
+  const { clean: cleanText, starts: cleanToRaw, ends: cleanToRawEnd } = normalizePdfText(fullText);
 
   const sentenceRanges = [];
   let searchStart = 0;
@@ -15998,14 +16031,7 @@ function alignSentencesToText(fullText, sentencesList, pageNum = '?') {
     // 기타 백슬래시로 시작하는 LaTeX 명령어 제거 (예: \sum, \int 등)
     text = text.replace(/\\[a-zA-Z]+/g, '');
 
-    let clean = '';
-    for (let i = 0; i < text.length; i++) {
-      const char = text[i];
-      if (/[a-zA-Z0-9\u3131-\uD79D\u4e00-\u9fff\u0370-\u03ff]/.test(char)) {
-        clean += char.toLowerCase();
-      }
-    }
-    return clean;
+    return normalizePdfText(text).clean;
   });
 
   for (let k = 0; k < cleanSents.length; k++) {
@@ -16043,9 +16069,20 @@ function alignSentencesToText(fullText, sentencesList, pageNum = '?') {
       const cleanEnd = Math.min(cleanText.length, idx + cleanSent.length);
       const rawStart = cleanToRaw[cleanStart] ?? (cleanToRaw[cleanToRaw.length - 1] ?? 0);
       const lastCleanIdx = cleanEnd - 1;
-      const rawEnd = (cleanToRaw[lastCleanIdx] !== undefined)
-        ? cleanToRaw[lastCleanIdx] + 1
+      let rawEnd = (cleanToRawEnd[lastCleanIdx] !== undefined)
+        ? cleanToRawEnd[lastCleanIdx]
         : (cleanToRaw[cleanToRaw.length - 1] ?? fullText.length);
+
+      // Include sentence-final punctuation, even when OCR inserts virtual spaces.
+      const suffix = sText.match(/[^\p{L}\p{M}\p{N}\s]+\s*$/u)?.[0]?.trim();
+      if (suffix) {
+        let cursor = rawEnd;
+        for (const char of suffix) {
+          while (/\s/u.test(fullText[cursor] || '') && cursor < fullText.length) cursor++;
+          if (fullText[cursor] !== char) break;
+          rawEnd = ++cursor;
+        }
+      }
 
       sentenceRanges.push({
         text: fullText.substring(rawStart, rawEnd),
@@ -16249,6 +16286,7 @@ function buildVirtualTextMap(container, pageNum) {
   // 줄간격 중앙값 및 폰트 크기 중앙값 계산
   const gaps = [];
   for (let i = 1; i < sortedSpans.length; i++) {
+    if (sortedSpans[i].lineIndex === sortedSpans[i - 1].lineIndex) continue;
     const gap = sortedSpans[i].top - sortedSpans[i - 1].top;
     if (gap > 0) gaps.push(gap);
   }
@@ -16299,7 +16337,8 @@ function buildVirtualTextMap(container, pageNum) {
       const prevText = collectTextNodes(sortedSpans[i - 1].el).map(n => n.nodeValue).join('').trim();
       const isPrevSectionNum = /^(?:[IVXLCDM\d]+(?:\.[IVXLCDM\d]+)*\.?|[A-Z]\.?)$/i.test(prevText);
 
-      if (!isPrevSectionNum && (isPrevHeader || isCurrentHeader || isLargeGap || gap < -50)) {
+      const isNewLine = spanInfo.lineIndex !== sortedSpans[i - 1].lineIndex;
+      if (isNewLine && !isPrevSectionNum && (isPrevHeader || isCurrentHeader || isLargeGap || gap < -50)) {
         if (!fullText.endsWith('\n\n')) fullText += '\n\n';
       } else {
         const prevChar = fullText[fullText.length - 1];
@@ -16364,7 +16403,7 @@ function findDisplayEquationsFromVTM(vtm) {
     // \uc55e\ub4a4\uac00 \ubaa8\ub450 \uae00\uc790\uc778 \ud558\uc774\ud508\uc740 \uc601\uc5b4 \ubcf5\ud569\uc5b4 \ud558\uc774\ud508\uc77c \ubfd0\uc778\ub370, \uc774\ub97c \uc218\uc2dd \uae30\ud638\ub85c
     // \uc624\ud310\ud558\uba74 \uc774\ub7f0 \ub2e8\uc5b4\uac00 \ud3ec\ud568\ub41c \uc9e7\uc740 \uc904(\ud2b9\ud788 \uc904\ubc14\uafc8\uc73c\ub85c \ub2e8\uc5b4 \uc218\uac00 \uc801\uc5b4\uc9c0\ub294
     // \ub9c8\uc9c0\ub9c9 \uc904)\uc774 \uc218\uc2dd\uc73c\ub85c \uc798\ubabb \ubd84\ub958\ub418\uc5b4 \ubb38\uc7a5 \ubc94\uc704\uac00 \uc911\uac04\uc5d0 \uc798\ub824\ub098\uac04\ub2e4(\uc2e4\uce21).
-    const hasMathSymbol = /[=<>+\u2212\u22c5\u0370-\u03ff\u2200-\u22ff*/\u00d7\u00f7_\^\\]/.test(lineText)
+    const hasMathSymbol = /[=<>+\u2212\u22c5\u2200-\u22ff*/\u00d7\u00f7_\^\\]/.test(lineText)
       || /(?<![a-zA-Z])-(?![a-zA-Z])/.test(lineText);
     const words = lineText.split(/\s+/);
     const engWordCount = words.filter(w => {
@@ -16372,7 +16411,10 @@ function findDisplayEquationsFromVTM(vtm) {
       return c.length >= 3 && !w.startsWith('\\');
     }).length;
 
-    const isEquation = hasMathSymbol && (
+    // The absence of English words is not evidence of a displayed equation.
+    const proseLetters = [...lineText].filter(c => /\p{L}/u.test(c) && !/[\p{Script=Latin}\p{Script=Greek}]/u.test(c)).length;
+    const hasMultilingualProse = proseLetters >= 3 || /\p{Script=Greek}{3,}/u.test(lineText);
+    const isEquation = !hasMultilingualProse && hasMathSymbol && (
       (hasEqNum && engWordCount <= 6) ||
       (!hasEqNum && lineText.length < 150 && engWordCount <= 4)
     );
@@ -16408,19 +16450,12 @@ function getSentenceRects(sentenceRange, vtm, containerEl) {
       for (const rect of rects) {
         if (rect.width < 1 || rect.height < 1) continue;
         const r = coordinates.rectToLocal(rect);
-        // 같은 라인의 인접 상자 병합 (top ± 2px)
-        const last = mergedRects[mergedRects.length - 1];
-        if (last && Math.abs(last.top - r.top) < 3 && Math.abs((last.left + last.width) - r.left) < 4) {
-          last.width = r.left + r.width - last.left;
-          last.height = Math.max(last.height, r.height);
-        } else {
-          mergedRects.push({ ...r });
-        }
+        mergedRects.push(r);
       }
     } catch (e) { /* 범위 생성 실패 시 무시 */ }
   }
 
-  return mergedRects;
+  return mergePdfHighlightRects(mergedRects);
 }
 
 // 오버레이 레이어에 하이라이트 상자를 드로잉
@@ -17129,6 +17164,9 @@ function getVtmCharRangeFromSelection(range, vtm) {
 
 // 오버레이에 호버 하이라이트를 그리고 번역 문장에 클래스를 적용
 function applyHoverHighlight(pageNum, sentenceRange) {
+  if (!sentenceRange.isEquation) {
+    sentenceRange = mappedSentenceRange(state.pdfPageSentences?.[pageNum] || [], sentenceRange.sentenceIdx) || sentenceRange;
+  }
   const vtm = state.virtualTextMaps && state.virtualTextMaps[pageNum];
   if (!vtm) return;
 
@@ -17163,6 +17201,8 @@ function applyActiveHighlight(pageNum, sentenceRange) {
   viewerScrollContainer.querySelectorAll('.active-mapped-sentence').forEach(el => el.classList.remove('active-mapped-sentence'));
 
   if (!sentenceRange || !pageNum) return;
+  sentenceRange = mappedSentenceRange(state.pdfPageSentences?.[pageNum] || [],
+    sentenceRange.originalSentenceIdx ?? sentenceRange.sentenceIdx) || sentenceRange;
 
   const vtm = state.virtualTextMaps && state.virtualTextMaps[pageNum];
   const pageWrapper = viewerScrollContainer.querySelector(`.pdf-page-wrapper[data-page="${pageNum}"]`);
@@ -17237,7 +17277,8 @@ function focusRef(pageNum, sentenceRange) {
 function focusPairRects(ref) {
   const sourceRects = []
   const sentenceRanges = state.pdfPageSentences?.[ref.pageNum] || []
-  const sentenceRange = sentenceRanges.find(range => range.sentenceIdx === ref.sentenceIdx || (range.originalSentenceIdx ?? range.sentenceIdx) === ref.sentenceIdx)
+  const sentenceRange = mappedSentenceRange(sentenceRanges, ref.sentenceIdx)
+    || sentenceRanges.find(range => range.sentenceIdx === ref.sentenceIdx)
   const vtm = state.virtualTextMaps?.[ref.pageNum]
   if (sentenceRange && vtm) {
     for (const nr of vtm.nodeRanges) {
@@ -17263,6 +17304,9 @@ function listFocusSentences() {
 focusModeController = new FocusModeController({ root: viewerScrollContainer, resolvePair: focusPairRects, listSentences: listFocusSentences, announce: key => announceA11y({ focusActive: t('viewer:a11y.focusActive'), focusPinned: t('viewer:a11y.focusPinned'), focusMoved: t('viewer:a11y.focusMoved') }[key]), notifyFallback: () => showToast(t('viewer:focus.performanceFallback'), 'info') })
 
 function startDwellSelection(pageNum, sentenceRange) {
+  if (!sentenceRange.isEquation) {
+    sentenceRange = mappedSentenceRange(state.pdfPageSentences?.[pageNum] || [], sentenceRange.sentenceIdx) || sentenceRange;
+  }
   if (sentenceHoverTimer) { clearTimeout(sentenceHoverTimer); sentenceHoverTimer = null }
 
   sentenceHoverTimer = setTimeout(() => {
@@ -17400,10 +17444,7 @@ if (viewerScrollContainer) {
 
       const sentenceRanges = state.pdfPageSentences && state.pdfPageSentences[pageNum];
       if (sentenceRanges) {
-        const sRange = sentenceRanges.find(r => {
-          const idx = r.sentenceIdx >= 10000 ? (r.originalSentenceIdx ?? r.sentenceIdx) : r.sentenceIdx;
-          return idx === sentenceIdx;
-        });
+        const sRange = mappedSentenceRange(sentenceRanges, sentenceIdx);
         if (sRange) {
           const pw = viewerScrollContainer.querySelector(`.pdf-page-wrapper[data-page="${pageNum}"]`);
           if (pw) {
@@ -17473,10 +17514,7 @@ if (viewerScrollContainer) {
         const sentenceRanges = state.pdfPageSentences && state.pdfPageSentences[pageNum];
         if (!sentenceRanges) return;
 
-        const sRange = sentenceRanges.find(r => {
-          const idx = r.sentenceIdx >= 10000 ? (r.originalSentenceIdx ?? r.sentenceIdx) : r.sentenceIdx;
-          return idx === sentenceIdx;
-        });
+        const sRange = mappedSentenceRange(sentenceRanges, sentenceIdx);
         if (!sRange) return;
 
         applyActiveHighlight(pageNum, sRange);

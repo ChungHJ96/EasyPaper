@@ -2423,8 +2423,9 @@ if (viewerClearCacheBtn) {
     )
     if (!ok) return
     try {
-      await clearSingleDocCacheAPI(state.sessionId)
-      await clearTranslationCacheAPI(state.sessionId)
+      const sessionId = state.sessionId
+      await clearTranslationCacheAPI(sessionId)
+      await clearSingleDocCacheAPI(sessionId)
       showToast(t('viewer:cacheClearedReload'), 'success')
       setTimeout(() => window.location.reload(), 500)
     } catch (err) {

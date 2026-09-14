@@ -13,12 +13,181 @@ export const MATCH_PRIORITY = {
 };
 
 const GREEK_MAP = {
+  // Lowercase
   'alpha': 'α', 'beta': 'β', 'gamma': 'γ', 'delta': 'δ', 'epsilon': 'ε',
   'zeta': 'ζ', 'eta': 'η', 'theta': 'θ', 'iota': 'ι', 'kappa': 'κ',
   'lambda': 'λ', 'mu': 'μ', 'nu': 'ν', 'xi': 'ξ', 'pi': 'π',
   'rho': 'ρ', 'sigma': 'σ', 'tau': 'τ', 'upsilon': 'υ', 'phi': 'φ',
-  'chi': 'χ', 'psi': 'ψ', 'omega': 'ω'
+  'chi': 'χ', 'psi': 'ψ', 'omega': 'ω',
+  // Variants
+  'varepsilon': 'ε', 'vartheta': 'θ', 'varpi': 'ϖ', 'varrho': 'ϱ',
+  'varsigma': 'ς', 'varphi': 'φ',
+  // Uppercase
+  'Gamma': 'Γ', 'Delta': 'Δ', 'Theta': 'Θ', 'Lambda': 'Λ', 'Xi': 'Ξ',
+  'Pi': 'Π', 'Sigma': 'Σ', 'Upsilon': 'Υ', 'Phi': 'Φ', 'Psi': 'Ψ', 'Omega': 'Ω'
 };
+
+const LATEX_MATH_OPERATORS = [
+  'log', 'ln', 'exp', 'sin', 'cos', 'tan', 'cot', 'sec', 'csc',
+  'sinh', 'cosh', 'tanh', 'coth', 'arcsin', 'arccos', 'arctan',
+  'min', 'max', 'sup', 'inf', 'lim', 'det', 'dim', 'ker', 'deg',
+  'arg', 'tr', 'rank', 'gcd', 'hom', 'diag'
+];
+
+const LATEX_SYMBOL_MAP = {
+  'infty': '∞', 'partial': '∂', 'nabla': '∇',
+  'forall': '∀', 'exists': '∃',
+  'sum': '∑', 'prod': '∏', 'int': '∫',
+  'leq': '≤', 'le': '≤',
+  'geq': '≥', 'ge': '≥',
+  'neq': '≠', 'ne': '≠',
+  'approx': '≈', 'equiv': '≡',
+  'notin': '∉', 'in': '∈',
+  'rightarrow': '→', 'leftarrow': '←', 'to': '→',
+  'Rightarrow': '⇒', 'Leftarrow': '⇐', 'iff': '⇔',
+  'times': '×', 'cdot': '·',
+  'pm': '±', 'mp': '∓'
+};
+
+const SUPER_SUB_MAP = {
+  '⁰': '0', '¹': '1', '²': '2', '³': '3', '⁴': '4', '⁵': '5', '⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9',
+  '⁺': '+', '⁻': '-', '⁼': '=', '⁽': '(', '⁾': ')', 'ⁿ': 'n', 'ⁱ': 'i',
+  '₀': '0', '₁': '1', '₂': '2', '₃': '3', '₄': '4', '₅': '5', '₆': '6', '₇': '7', '₈': '8', '₉': '9',
+  '₊': '+', '₋': '-', '₌': '=', '₍': '(', '₎': ')',
+  'ₐ': 'a', 'ₑ': 'e', 'ₒ': 'o', 'ₓ': 'x', 'ₕ': 'h', 'ₖ': 'k', 'ₗ': 'l', 'ₘ': 'm', 'ₙ': 'n', 'ₚ': 'p', 'ₛ': 's', 'ₜ': 't'
+};
+
+const VALID_CHAR_REGEX = /[a-zA-Z0-9\u3131-\uD79D\u4e00-\u9fff\u0370-\u03ff\u2200-\u22ff\u2190-\u21ff\u00d7\u00f7\u00b1\u00b7]/;
+
+/**
+ * 빈 구간(gap) 내에서 앞뒤 문장부호/공백을 제외한 실질적인 문자 범위를 계산합니다.
+ * 문장부호나 공백만으로 이루어진 구간은 null을 반환합니다.
+ */
+function extractSubstantiveGap(gap, fullText) {
+  let start = gap.start;
+  let end = gap.end;
+
+  // 앞쪽 문장부호 및 공백 스킵
+  while (start < end && !VALID_CHAR_REGEX.test(fullText[start])) {
+    start++;
+  }
+  // 뒤쪽 공백 스킵
+  while (end > start && /\s/.test(fullText[end - 1])) {
+    end--;
+  }
+
+  if (start >= end || !VALID_CHAR_REGEX.test(fullText.substring(start, end))) {
+    return null;
+  }
+
+  return {
+    start,
+    end,
+    rawStart: gap.start,
+    rawEnd: gap.end,
+    text: fullText.substring(start, end),
+    len: end - start,
+  };
+}
+
+/**
+ * 단어 단위 토큰 집합을 추출합니다 (길이 2 이상의 알파벳/숫자/유니코드 문자).
+ */
+function extractSubstantiveWords(str) {
+  if (!str) return [];
+  return str.toLowerCase().match(/[a-z0-9\u3131-\uD79D\u4e00-\u9fff\u0370-\u03ff]{2,}/g) || [];
+}
+
+/**
+ * 매칭 실패 문장 그룹에 가장 적절한 빈 구간을 평가하여 선택합니다.
+ *
+ * 1. 문장부호/공백만 있는 구간은 보간 후보에서 제외
+ * 2. 실패 문장의 전체 길이 및 주변 문장 위치와의 상대적 거리 고려
+ * 3. 공통 단어(어휘) 유사도 검사
+ * 4. 후보가 여러 개이거나 근거가 부족하면 null 반환 (관련 없는 구간에 억지 매핑 방지)
+ */
+function selectBestTargetGap(freeGaps, fullText, failedSentences, prevMatch, nextMatch, totalSentencesCount, winStart, winEnd) {
+  const candidates = [];
+  for (const g of freeGaps) {
+    const sub = extractSubstantiveGap(g, fullText);
+    if (sub) {
+      candidates.push(sub);
+    }
+  }
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const failedTexts = failedSentences.map(s => s.text || '').join(' ');
+  let totalLen = 0;
+  for (const s of failedSentences) {
+    totalLen += Math.max(1, (s.text || '').length);
+  }
+
+  const failedWords = new Set(extractSubstantiveWords(failedTexts));
+
+  // 각 후보 구간에 대해 점수 산출
+  const scored = candidates.map(cand => {
+    // A. 길이 적합도 (0 ~ 1)
+    const lenRatio = Math.min(cand.len, totalLen) / Math.max(cand.len, totalLen);
+
+    // B. 상대적 위치 적합도 (0 ~ 1)
+    const prevIdx = prevMatch ? prevMatch.origIndex : -1;
+    const nextIdx = nextMatch ? nextMatch.origIndex : totalSentencesCount;
+    const sentFraction = (failedSentences[0].origIndex - prevIdx) / Math.max(1, nextIdx - prevIdx);
+
+    const winSpan = Math.max(1, winEnd - winStart);
+    const gapPosFraction = (cand.start - winStart) / winSpan;
+    const posDiff = Math.abs(gapPosFraction - sentFraction);
+    const posScore = Math.max(0, 1 - posDiff);
+
+    // C. 공통 단어 유사도 (0 ~ 1)
+    const candWords = extractSubstantiveWords(cand.text);
+    let overlapCount = 0;
+    for (const w of candWords) {
+      if (failedWords.has(w)) overlapCount++;
+    }
+    const simScore = failedWords.size > 0 ? overlapCount / Math.max(failedWords.size, candWords.length || 1) : 0;
+
+    const compositeScore = (lenRatio * 0.45) + (posScore * 0.30) + (simScore * 0.25);
+
+    return {
+      cand,
+      lenRatio,
+      posScore,
+      simScore,
+      compositeScore,
+      overlapCount,
+    };
+  });
+
+  scored.sort((a, b) => b.compositeScore - a.compositeScore);
+  const best = scored[0];
+
+  // 단일 후보인 경우: 길이가 너무 비상식적으로 작고 공통 단어도 없으면 매핑하지 않음
+  if (candidates.length === 1) {
+    if (best.cand.len < Math.min(10, totalLen * 0.2) && best.overlapCount === 0) {
+      return null;
+    }
+    return best.cand;
+  }
+
+  // 복수 후보인 경우:
+  // 근거가 부족한 경우(최고점이 너무 낮거나, 1·2위 간 변별력이 없고 어휘 힌트도 없는 경우) 억지 매핑 제외
+  if (best.compositeScore < 0.25 && best.overlapCount === 0) {
+    return null;
+  }
+
+  const second = scored[1];
+  if (best.overlapCount === 0 && second.overlapCount === 0) {
+    if (Math.abs(best.compositeScore - second.compositeScore) < 0.10) {
+      return null;
+    }
+  }
+
+  return best.cand;
+}
 
 /**
  * 주어진 텍스트에서 원문 문장들의 정확한 문자 범위(start, end)를 유니코드 인지 방식으로 추출하여 매핑합니다.
@@ -37,9 +206,10 @@ export function alignSentencesToText(fullText, sentencesList, pageNum = '?') {
   let cleanText = '';
 
   for (let i = 0; i < fullText.length; i++) {
-    const char = fullText[i];
-    // 알파벳, 숫자, 한글, 한자 및 그리스 문자(수식 기호 대응)만 비교 대상으로 삼음
-    if (/[a-zA-Z0-9\u3131-\uD79D\u4e00-\u9fff\u0370-\u03ff]/.test(char)) {
+    let char = fullText[i];
+    char = SUPER_SUB_MAP[char] || char;
+    // 알파벳, 숫자, 한글, 한자, 그리스 문자 및 수학 기호/연산자 매칭
+    if (VALID_CHAR_REGEX.test(char)) {
       cleanToRaw.push(i);
       cleanText += char.toLowerCase();
     }
@@ -51,18 +221,32 @@ export function alignSentencesToText(fullText, sentencesList, pageNum = '?') {
   const cleanSents = (sentencesList || []).map(s => {
     let text = s || '';
 
-    // LaTeX 그리스 문자 명령어를 유니코드 문자로 변환
-    for (const [name, unicode] of Object.entries(GREEK_MAP)) {
-      text = text.replace(new RegExp('\\\\' + name, 'g'), unicode);
+    // 1. 표준 수학 함수명 (\log -> log, \exp -> exp)
+    for (const op of LATEX_MATH_OPERATORS) {
+      text = text.replace(new RegExp('\\\\' + op + '(?![a-zA-Z])', 'g'), op);
     }
 
-    // 기타 백슬래시로 시작하는 LaTeX 명령어 제거 (예: \sum, \int 등)
+    // 2. LaTeX 그리스 문자 명령어를 유니코드 문자로 변환 (\alpha -> α, \Gamma -> Γ)
+    for (const [name, unicode] of Object.entries(GREEK_MAP)) {
+      text = text.replace(new RegExp('\\\\' + name + '(?![a-zA-Z])', 'g'), unicode);
+    }
+
+    // 3. LaTeX 수학 기호 매핑 (\le -> ≤, \to -> →)
+    for (const [cmd, unicode] of Object.entries(LATEX_SYMBOL_MAP)) {
+      text = text.replace(new RegExp('\\\\' + cmd + '(?![a-zA-Z])', 'g'), unicode);
+    }
+
+    // 4. 서식/스타일 매크로 제거 (\mathbf{x} -> {x})
+    text = text.replace(/\\(?:mathbf|mathrm|mathit|textbf|textit|text|operatorname|bm|boldsymbol|mathcal|mathbb|underline)(?![a-zA-Z])/g, '');
+
+    // 5. 기타 남은 백슬래시 LaTeX 명령어 제거
     text = text.replace(/\\[a-zA-Z]+/g, '');
 
     let clean = '';
     for (let i = 0; i < text.length; i++) {
-      const char = text[i];
-      if (/[a-zA-Z0-9\u3131-\uD79D\u4e00-\u9fff\u0370-\u03ff]/.test(char)) {
+      let char = text[i];
+      char = SUPER_SUB_MAP[char] || char;
+      if (VALID_CHAR_REGEX.test(char)) {
         clean += char.toLowerCase();
       }
     }
@@ -218,8 +402,19 @@ export function alignSentencesToText(fullText, sentencesList, pageNum = '?') {
         freeGaps.push({ start: cursor, end: winEnd });
       }
 
-      // 가장 적절한(첫 번째 유효한) 빈 공간에 실패 문장들을 분할 배정
-      const targetGap = freeGaps.find(g => g.end > g.start);
+      // 문장부호/공백 구간 제외, 길이 및 위치 등을 종합 고려한 최적 구간 선택
+      const failedGroup = sentenceRanges.slice(k_start, k_end + 1);
+      const targetGap = selectBestTargetGap(
+        freeGaps,
+        fullText,
+        failedGroup,
+        prevMatch,
+        nextMatch,
+        sentenceRanges.length,
+        winStart,
+        winEnd
+      );
+
       if (targetGap) {
         const gapSize = targetGap.end - targetGap.start;
         const lens = [];
@@ -233,7 +428,9 @@ export function alignSentencesToText(fullText, sentencesList, pageNum = '?') {
         let curPos = targetGap.start;
         for (let idx = 0; idx < lens.length; idx++) {
           const i = k_start + idx;
-          const share = Math.round((lens[idx] / totalLen) * usedGap);
+          const share = (idx === lens.length - 1 && lens.length > 1 && usedGap === gapSize)
+            ? targetGap.end - curPos
+            : Math.round((lens[idx] / totalLen) * usedGap);
           sentenceRanges[i].start = curPos;
           sentenceRanges[i].end = Math.min(targetGap.end, curPos + share);
           sentenceRanges[i].priority = MATCH_PRIORITY.GAP;

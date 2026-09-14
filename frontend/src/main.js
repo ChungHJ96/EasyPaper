@@ -16970,14 +16970,14 @@ function splitIntoSentences(fullText) {
     if (!paraText.trim()) continue;
 
     // 문단 내부에서 구두점을 기준으로 2차 문장 분할
-    const candRegex = /([.!?]+)([ \t\n\r]+)/g;
+    const candRegex = /([。！？]+[」』”’）】》〉]*)([ \t\n\r]*)|([.!?]+)([ \t\n\r]+)/g;
     let lastSentenceIndex = 0;
     let sMatch;
 
     while ((sMatch = candRegex.exec(paraText)) !== null) {
       const puncIndex = sMatch.index;
-      const punc = sMatch[1];
-      const whitespace = sMatch[2];
+      const punc = sMatch[1] || sMatch[3];
+      const whitespace = sMatch[1] ? sMatch[2] : sMatch[4];
       const nextIndex = puncIndex + punc.length + whitespace.length;
 
       if (nextIndex >= paraText.length) {
@@ -17241,7 +17241,7 @@ function detectSentenceAtMouse(e) {
   if (charIdx < 0) return null;
 
   const sRange = findSentenceAtChar(charIdx, sentenceRanges);
-  return sRange ? { pageNum, sentenceRange: sRange } : null;
+  return sRange ? { pageNum, sentenceRange: sRange, charIdx } : null;
 }
 
 // 700ms 드웰 후 문장 전체를 자동 선택하고 선택 메뉴 표시하는 헬퍼
@@ -17270,15 +17270,79 @@ function createDomRangeFromVtmRange(vtm, charStart, charEnd) {
 
 // hover는 시각적 overlay와 내부 범위만 갱신한다. native Selection은 사용자의
 // 실제 드래그에만 맡겨 hover 직후에도 caret이 끊기지 않게 한다.
-function focusRef(pageNum, sentenceRange) {
-  return { pageNum, sentenceIdx: sentenceRange.sentenceIdx, revealTranslation: true, element: viewerScrollContainer.querySelector(`.trans-sentence[data-page="${pageNum}"][data-sentence-idx="${sentenceRange.sentenceIdx >= 10000 ? (sentenceRange.originalSentenceIdx ?? sentenceRange.sentenceIdx) : sentenceRange.sentenceIdx}"]`) || viewerScrollContainer.querySelector(`.pdf-page-wrapper[data-page="${pageNum}"]`) }
+const legacyFocusPartsCache = new WeakMap()
+function legacyFocusParts(pageNum, sentenceIdx) {
+  if (!focusModeController?.settings.enabled) return []
+  const pair = state.translationSentences?.[pageNum]?.[sentenceIdx]
+  if (!pair || !/[。！？]/.test(pair.src || '')) return []
+  const vtm = state.virtualTextMaps?.[pageNum]
+  const whole = mappedSentenceRange(state.pdfPageSentences?.[pageNum] || [], sentenceIdx)
+  if (!vtm || !whole) return []
+  let cache = legacyFocusPartsCache.get(vtm)
+  if (!cache) { cache = new Map(); legacyFocusPartsCache.set(vtm, cache) }
+  const key = JSON.stringify([pair.src, pair.trans, whole.charStart, whole.charEnd])
+  const cached = cache.get(sentenceIdx)
+  if (cached?.key === key) return cached.parts
+  const source = splitIntoSentences(pair.src)
+  const translated = splitIntoSentences(pair.trans || '')
+  const parts = source.length < 2 ? [] : alignSentencesToText(vtm.fullText.slice(whole.charStart, whole.charEnd), source.map(s => s.text), pageNum)
+    .map((range, partIdx) => ({ partIdx, charStart: whole.charStart + range.start,
+      charEnd: whole.charStart + range.end,
+      translation: source.length === translated.length ? translated.slice(0, partIdx + 1).map(s => s.text) : null }))
+  cache.set(sentenceIdx, { key, parts })
+  return parts
+}
+
+// Keep cached sentence IDs (and annotations) stable; subdivision is view-only.
+function focusRef(pageNum, sentenceRange, charIdx = sentenceRange.charStart) {
+  const sentenceIdx = sentenceRange.originalSentenceIdx ?? sentenceRange.sentenceIdx
+  const parts = sentenceRange.isEquation ? [] : legacyFocusParts(pageNum, sentenceIdx)
+  // OCR whitespace between sentences must not briefly restore paragraph focus.
+  const part = parts.find(part => charIdx < part.charEnd) || parts.at(-1)
+  return { pageNum, sentenceIdx: sentenceRange.sentenceIdx, partIdx: part ? part.partIdx : undefined,
+    revealTranslation: true, element: viewerScrollContainer.querySelector(`.trans-sentence[data-page="${pageNum}"][data-sentence-idx="${sentenceIdx}"]`) || viewerScrollContainer.querySelector(`.pdf-page-wrapper[data-page="${pageNum}"]`) }
+}
+
+function translationFocusPartRects(elements, texts) {
+  let fullText = ''
+  const nodes = []
+  for (const element of elements) {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const start = fullText.length
+      fullText += node.nodeValue
+      nodes.push({ node, start, end: fullText.length })
+    }
+    fullText += ' '
+  }
+  const matched = alignSentencesToText(fullText, texts).at(-1)
+  if (!matched) return []
+  const rects = []
+  for (const entry of nodes) {
+    const start = Math.max(entry.start, matched.start), end = Math.min(entry.end, matched.end)
+    if (start >= end) continue
+    const range = document.createRange()
+    range.setStart(entry.node, start - entry.start); range.setEnd(entry.node, end - entry.start)
+    rects.push(...range.getClientRects())
+  }
+  return rects
+}
+
+function translationFocusRef(pageNum, sentenceIdx, element, event) {
+  const ref = { pageNum, sentenceIdx, element }
+  const elements = [...viewerScrollContainer.querySelectorAll(`.trans-sentence[data-page="${pageNum}"][data-sentence-idx="${sentenceIdx}"]`)]
+  const part = legacyFocusParts(pageNum, sentenceIdx).find(part => part.translation
+    && translationFocusPartRects(elements, part.translation).some(r => event.clientX >= r.left && event.clientX <= r.right && event.clientY >= r.top && event.clientY <= r.bottom))
+  return part ? { ...ref, partIdx: part.partIdx } : ref
 }
 
 function focusPairRects(ref) {
   const sourceRects = []
   const sentenceRanges = state.pdfPageSentences?.[ref.pageNum] || []
-  const sentenceRange = mappedSentenceRange(sentenceRanges, ref.sentenceIdx)
+  let sentenceRange = mappedSentenceRange(sentenceRanges, ref.sentenceIdx)
     || sentenceRanges.find(range => range.sentenceIdx === ref.sentenceIdx)
+  const part = ref.partIdx !== undefined ? legacyFocusParts(ref.pageNum, ref.sentenceIdx)[ref.partIdx] : null
+  if (part) sentenceRange = { ...sentenceRange, charStart: part.charStart, charEnd: part.charEnd }
   const vtm = state.virtualTextMaps?.[ref.pageNum]
   if (sentenceRange && vtm) {
     for (const nr of vtm.nodeRanges) {
@@ -17288,8 +17352,18 @@ function focusPairRects(ref) {
     }
   }
   const idx = ref.sentenceIdx >= 10000 ? (sentenceRange?.originalSentenceIdx ?? ref.sentenceIdx) : ref.sentenceIdx
-  const translationRects = []
+  let translationRects = []
   viewerScrollContainer.querySelectorAll(`.trans-sentence[data-page="${ref.pageNum}"][data-sentence-idx="${idx}"]`).forEach(element => translationRects.push(...visibleFocusRects(element)))
+  if (part?.translation) {
+    const elements = [...viewerScrollContainer.querySelectorAll(`.trans-sentence[data-page="${ref.pageNum}"][data-sentence-idx="${idx}"]`)]
+    const selected = translationFocusPartRects(elements, part.translation)
+    // Preserve clipping from scrollable translation panes.
+    translationRects = selected.flatMap(r => translationRects.map(v => ({
+      left: Math.max(r.left, v.left), top: Math.max(r.top, v.top),
+      right: Math.min(r.right, v.right), bottom: Math.min(r.bottom, v.bottom),
+    }))).filter(r => r.right > r.left && r.bottom > r.top)
+      .map(r => ({ ...r, width: r.right - r.left, height: r.bottom - r.top }))
+  }
   // Focus crops, blur openings and tint must share the same continuous source
   // lines as hover highlights. Keep viewport coordinates for the fixed layer.
   const sourceLineRects = mergePdfHighlightRects(sourceRects).map(rect => ({
@@ -17301,7 +17375,14 @@ function focusPairRects(ref) {
 function listFocusSentences() {
   const result = []
   for (let pageNum = 1; pageNum <= state.totalPages; pageNum++) {
-    for (const sentenceRange of state.pdfPageSentences?.[pageNum] || []) if (sentenceRange.sentenceIdx < 10000) result.push(focusRef(pageNum, sentenceRange))
+    const seen = new Set()
+    for (const sentenceRange of state.pdfPageSentences?.[pageNum] || []) {
+      if (sentenceRange.sentenceIdx >= 10000 || seen.has(sentenceRange.sentenceIdx)) continue
+      seen.add(sentenceRange.sentenceIdx)
+      const parts = legacyFocusParts(pageNum, sentenceRange.sentenceIdx)
+      if (parts.length) parts.forEach(part => result.push(focusRef(pageNum, sentenceRange, part.charStart)))
+      else result.push(focusRef(pageNum, sentenceRange))
+    }
   }
   return result
 }
@@ -17355,7 +17436,11 @@ if (viewerScrollContainer) {
     let annSpan = null;
 
     // 번역 패널 호버는 mouseover로 처리됨 (기존 trans-sentence 방식 유지)
-    if (e.target.closest('.trans-page-block')) return;
+    if (e.target.closest('.trans-page-block')) {
+      const element = e.target.closest('.trans-sentence')
+      if (element) focusModeController.focus(translationFocusRef(Number(element.dataset.page), Number(element.dataset.sentenceIdx), element, e))
+      return;
+    }
 
     // PDF textLayer 위 문장 감지
     const detected = detectSentenceAtMouse(e);
@@ -17395,7 +17480,7 @@ if (viewerScrollContainer) {
       }
     }
 
-    if (isSame) { focusModeController.focus(focusRef(pageNum, sentenceRange)); return; }
+    if (isSame) { focusModeController.focus(focusRef(pageNum, sentenceRange, detected.charIdx)); return; }
 
     // 이전 페이지 호버 클리어
     if (currentHoverPage !== null && currentHoverPage !== pageNum) {
@@ -17408,7 +17493,7 @@ if (viewerScrollContainer) {
 
     currentHoverPage = pageNum;
     currentHoverSentenceIdx = sentenceRange.sentenceIdx;
-    focusModeController.focus(focusRef(pageNum, sentenceRange));
+    focusModeController.focus(focusRef(pageNum, sentenceRange, detected.charIdx));
 
     applyHoverHighlight(pageNum, sentenceRange);
 
@@ -17436,7 +17521,7 @@ if (viewerScrollContainer) {
       if (isNaN(pageNum)) return;
       const sentenceIdx = parseInt(transSent.dataset.sentenceIdx, 10);
       if (isNaN(sentenceIdx)) return;
-      focusModeController.focus({ pageNum, sentenceIdx, element: transSent });
+      focusModeController.focus(translationFocusRef(pageNum, sentenceIdx, transSent, e));
       focusModeController.cancelLeave();
 
       // 번역 패널 호버 → PDF 오버레이 하이라이트
@@ -17513,7 +17598,7 @@ if (viewerScrollContainer) {
         const pageNum = parseInt(pageWrapper.dataset.page, 10);
         if (isNaN(pageNum)) return;
         const sentenceIdx = parseInt(transSent.dataset.sentenceIdx, 10);
-        if (focusModeController.settings.enabled) { focusModeController.togglePin({ pageNum, sentenceIdx, element: transSent }); transSent.setAttribute('aria-pressed', String(focusModeController.pinned)); }
+        if (focusModeController.settings.enabled) { focusModeController.togglePin(translationFocusRef(pageNum, sentenceIdx, transSent, e)); transSent.setAttribute('aria-pressed', String(focusModeController.pinned)); }
         if (isNaN(sentenceIdx)) return;
 
         const sentenceRanges = state.pdfPageSentences && state.pdfPageSentences[pageNum];
@@ -17560,7 +17645,7 @@ if (viewerScrollContainer) {
       }
 
       const { pageNum, sentenceRange } = detected;
-      if (focusModeController.settings.enabled) focusModeController.togglePin(focusRef(pageNum, sentenceRange));
+      if (focusModeController.settings.enabled) focusModeController.togglePin(focusRef(pageNum, sentenceRange, detected.charIdx));
       applyActiveHighlight(pageNum, sentenceRange);
       activeHighlightPage = pageNum;
       activeHighlightSentenceIdx = sentenceRange.sentenceIdx;

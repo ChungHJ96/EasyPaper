@@ -320,7 +320,7 @@ export class FocusModeController {
     this.root?.classList.toggle('focus-mode-enabled', this.settings.enabled)
     if (!this.settings.enabled) this.clear(); else if (this.current) this.scheduleRender()
   }
-  sameRef(a, b) { return !!a && !!b && a.pageNum === b.pageNum && a.sentenceIdx === b.sentenceIdx }
+  sameRef(a, b) { return !!a && !!b && a.pageNum === b.pageNum && a.sentenceIdx === b.sentenceIdx && a.partIdx === b.partIdx }
   focus(ref, { pin = false } = {}) {
     if (!this.settings.enabled || !ref) return false
     this.cancelLeave()

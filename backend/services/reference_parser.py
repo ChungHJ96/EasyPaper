@@ -101,9 +101,34 @@ _AUTHOR_YEAR_ENTRY_START_RE = re.compile(r"^\s*" + _AUTHOR_YEAR_SURNAME_SRC + _A
 # 수십 개 항목 전체가 앞 항목 하나에 뭉쳐 흡수돼버리는 문제가 실제로 관찰됨.
 # 마침표 뒤에 그런 숫자 목록이 있으면 건너뛰고 그 다음에서 Surname을 찾는다.
 _AUTHOR_YEAR_CITED_PAGES_SRC = r"\d{1,4}(?:,\s*\d{1,4})*\s+"
+# 참고문헌 직전 항목이 끝나는 다양한 패턴:
+# 1) 텍스트 시작 (^)
+# 2) 빈 줄 / 문단 구분 (\n\n+) - 각 항목이 빈 줄로 구분된 경우
+# 3) 문장 종결 부호 ([.!?]\s+) - 뒤에 backref 인용 페이지 번호가 붙은 경우 포함
+# 4) DOI 표기 - 현대 논문은 항목 끝에 마침표 없이 DOI(doi: 10.xxx... 또는 https://doi.org/...)로
+#    끝나는 경우가 대단히 많으며, 2단 레이아웃 줄바꿈으로 인해 뒷부분 슬러그가 공백으로 쪼개지는 경우("...0 1407.x") 포함
+# 5) 일반 URL (https?://...)
+# 6) 마침표 없이 끝나는 페이지 범위 (예: "243–257 " 또는 "pp. 10–25 ")
+# 7) 전자 논문 식별자 / Article 번호 (예: "e0167226 " 또는 "Article 595 ")
+_DOI_END_SRC = r"(?:\bdoi:\s*|\bhttps?://(?:dx\.)?doi\.org/)\S+(?:\s+[a-z0-9_.-]+)*\s+"
+_URL_END_SRC = r"\bhttps?://\S+\s+"
+_PAGE_RANGE_END_SRC = r"\b\d{1,5}[–-]\d{1,5}\s+"
+_ARTICLE_ID_END_SRC = r"\b(?:e\d{5,8}|Article\s*[a-z]?\d+)\s+"
+
+_AUTHOR_YEAR_END_PRECEDING_SRC = (
+    r"(?:"
+    r"^"
+    r"|\n\n+"
+    r"|[.!?]\s+(?:" + _AUTHOR_YEAR_CITED_PAGES_SRC + r")?"
+    r"|" + _DOI_END_SRC +
+    r"|" + _URL_END_SRC +
+    r"|" + _PAGE_RANGE_END_SRC +
+    r"|" + _ARTICLE_ID_END_SRC +
+    r")"
+)
 _AUTHOR_YEAR_ENTRY_BOUNDARY_RE = re.compile(
-    r"(?:^|[.!?]\s+(?:" + _AUTHOR_YEAR_CITED_PAGES_SRC + r")?)"
-    r"(?=" + _AUTHOR_YEAR_SURNAME_SRC + _AUTHOR_YEAR_SURNAME_END_SRC + r")"
+    _AUTHOR_YEAR_END_PRECEDING_SRC + r"(?=" + _AUTHOR_YEAR_SURNAME_SRC + _AUTHOR_YEAR_SURNAME_END_SRC + r")",
+    re.MULTILINE
 )
 # 연도는 APA류처럼 괄호로 싸인 경우("(2020)")뿐 아니라, AAAI/IJCAI류처럼
 # 저자 목록 바로 뒤에 괄호 없이 오는 경우("... 2020. Title...")도 지원한다.
@@ -273,39 +298,47 @@ def _parse_author_year_entries(body_text: str) -> Dict[str, str]:
     키는 "성(소문자)+연도"(예: "vaswani2017")이며, 같은 저자가 같은 해에
     여러 편을 낸 경우(2020a/2020b 등) 먼저 나온 항목만 유지한다.
     """
-    normalized = re.sub(r"\s+", " ", body_text).strip()
-    if not normalized:
+    if not body_text:
         return {}
 
-    starts = [m.end() for m in _AUTHOR_YEAR_ENTRY_BOUNDARY_RE.finditer(normalized)]
+    # 줄바꿈 정규화 (\r\n -> \n, 줄 내부 공백 압축, 3개 이상 연속 줄바꿈은 \n\n으로)
+    cleaned = re.sub(r"\r\n?", "\n", body_text)
+    cleaned = re.sub(r"[ \t]+", " ", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    if not cleaned:
+        return {}
+
+    starts = [m.end() for m in _AUTHOR_YEAR_ENTRY_BOUNDARY_RE.finditer(cleaned)]
     if not starts or starts[0] != 0:
         starts.insert(0, 0)
 
     entries: Dict[str, str] = {}
     for i, start in enumerate(starts):
-        end = starts[i + 1] if i + 1 < len(starts) else len(normalized)
-        text = normalized[start:end].strip()
+        end = starts[i + 1] if i + 1 < len(starts) else len(cleaned)
+        text = cleaned[start:end].strip()
         if not text:
             continue
-        surname_match = _AUTHOR_YEAR_ENTRY_START_RE.match(text)
+        text_one_line = re.sub(r"\s+", " ", text).strip()
+        surname_match = _AUTHOR_YEAR_ENTRY_START_RE.match(text_one_line)
         if not surname_match:
             continue
-        year_match = _YEAR_RE.search(text)
+        year_match = _YEAR_RE.search(text_one_line)
         if not year_match:
             continue
         year = year_match.group(1) or year_match.group(2)
-        key = f"{surname_match.group(1).lower()}{year}"
+        raw_surname = surname_match.group(1).lower().replace("’", "'")
+        key = f"{raw_surname}{year}"
         if key not in entries:
-            entries[key] = text[:_MAX_ENTRY_LENGTH]
-        # Store ASCII-folded alias key if different (e.g. 'harkonen2006' alongside 'härkönen2006')
+            entries[key] = text_one_line[:_MAX_ENTRY_LENGTH]
+        # Store ASCII-folded alias key if different (e.g. 'harkonen2006' alongside 'härkönen2006', 'joumaa2016' alongside 'jouma'a2016')
         ascii_surname = (
             unicodedata.normalize("NFKD", surname_match.group(1))
             .encode("ascii", "ignore")
             .decode("ascii")
             .lower()
         )
-        if ascii_surname:
+        if ascii_surname and ascii_surname != raw_surname:
             ascii_key = f"{ascii_surname}{year}"
             if ascii_key not in entries:
-                entries[ascii_key] = text[:_MAX_ENTRY_LENGTH]
+                entries[ascii_key] = text_one_line[:_MAX_ENTRY_LENGTH]
     return entries

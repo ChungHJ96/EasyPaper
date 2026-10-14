@@ -659,7 +659,7 @@ def _build_mineru_pages(content_list: Any, total_pages: int = 0, pdf_path: Optio
                     "bbox": bbox,
                     "text": txt,
                     "type": 0,
-                    "raw_type": t or "text",
+                    "raw_type": item.get("sub_type") or t or "text",
                 })
 
         body_str = "\n\n".join(b["text"] for b in body_blocks).strip()
@@ -1847,6 +1847,9 @@ def _mineru_item_text(item: Dict[str, Any]) -> str:
         return " ".join(caps).strip()
     if t == "table":
         return " ".join(item.get("table_caption") or []).strip()
+    if t == "list":
+        items = item.get("list_items") or item.get("items") or []
+        return "\n\n".join(str(x).strip() for x in items if str(x).strip()).strip()
     if t in ("text", "equation"):
         return (item.get("text") or "").strip()
     if item.get("text"):

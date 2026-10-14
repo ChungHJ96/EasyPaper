@@ -95,11 +95,13 @@ def test_mineru_item_text_uses_captions_not_raw_body():
     image_item = {"type": "image", "image_caption": ["Figure 2: an image."], "img_path": "x.png"}
     table_item = {"type": "table", "table_caption": ["Table 1: a table."], "table_body": "<table></table>"}
     equation_item = {"type": "equation", "text": "y = mx + b (5)"}
+    list_item = {"type": "list", "list_items": ["Item 1", "Item 2"]}
 
     assert _mineru_item_text(text_item) == "Body paragraph."
     assert _mineru_item_text(image_item) == "Figure 2: an image."
     assert _mineru_item_text(table_item) == "Table 1: a table."
     assert _mineru_item_text(equation_item) == "y = mx + b (5)"
+    assert _mineru_item_text(list_item) == "Item 1\n\nItem 2"
 
 
 def test_mineru_page_regions_normalizes_bbox_and_matches_caption():

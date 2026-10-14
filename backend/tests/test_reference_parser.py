@@ -385,3 +385,31 @@ def test_author_year_entries_with_standalone_diacritics():
     assert "Härkönen, T., Dietz, R." in refs["härkönen2006"]
 
 
+def test_author_year_entries_ending_with_doi_without_period():
+    """현대 저널(Frontiers, PLOS, Nature 등)은 참고문헌 각 항목 끝에 마침표 없이
+    DOI(doi: 10.xxxx... 또는 https://doi.org/...)로 끝나는 경우가 많다.
+    마침표가 없거나 2단 레이아웃 줄바꿈으로 뒷부분 슬러그가 공백으로 쪼개져도
+    다음 항목의 경계를 정확하게 식별해야 한다."""
+    pages = [{"page_num": 1, "text": (
+        "References\n\n"
+        "Bailleul, F., Pinaud, D., Hindell, M., and Guinet, C. (2008). "
+        "Assessment of scale-dependent foraging behaviour. J. Anim. Ecol. 77, 948–957. "
+        "doi: 10.1111/j.1365-2656.2008.0 1407.x\n\n"
+        "Biernacki, C., Celeux, G., and Govaert, G. (2000). Assessing a mixture "
+        "model for clustering. IEEE Trans. Pattern Anal. 22, 719–725. "
+        "doi: 10.1109/34.86 5189\n\n"
+        "Block, B. A., Jonsen, I. D., and Bograd, S. J. (2011). Tracking apex "
+        "marine predator movements. Nature 475, 86–90. doi: 10.1038/nature10082\n\n"
+        "Jouma’a, J., Le Bras, Y., and Picard, B. (2016). Adjustment of diving "
+        "behaviour. Funct. Ecol. 30, 636–648. doi: 10.1111/1365-2435.12514"
+    )}]
+    refs = extract_reference_list(pages)
+    assert "bailleul2008" in refs
+    assert "biernacki2000" in refs
+    assert "block2011" in refs
+    assert "jouma'a2016" in refs
+    assert "joumaa2016" in refs
+    assert "Biernacki" not in refs["bailleul2008"]
+    assert "Block" not in refs["biernacki2000"]
+
+

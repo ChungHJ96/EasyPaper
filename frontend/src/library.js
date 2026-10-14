@@ -96,6 +96,25 @@ export async function fetchLibraryDocImages(docId) {
   return res.json()
 }
 
+export async function fetchLibraryPageBlocks(docId, pageNum) {
+  const res = await fetch(`${API_BASE}/library/${encodeURIComponent(docId)}/pages/${pageNum}/blocks`, { cache: 'no-store' })
+  if (!res.ok) throw new Error('Failed to fetch page blocks')
+  return res.json()
+}
+
+export async function updateLibraryPageBlocks(docId, pageNum, blocks) {
+  const res = await fetch(`${API_BASE}/library/${encodeURIComponent(docId)}/pages/${pageNum}/blocks`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ blocks })
+  })
+  if (!res.ok) throw new Error('Failed to update page blocks')
+  invalidateLibraryGetCache()
+  return res.json()
+}
+
 export async function fetchPaperTagOntology() {
   const res = await fetch(`${API_BASE}/library/tags/ontology`)
   if (!res.ok) throw new Error('태그 분류표 조회 실패')

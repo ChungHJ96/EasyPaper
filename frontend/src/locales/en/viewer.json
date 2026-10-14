@@ -91,5 +91,17 @@
   "search.prev": "Previous (Shift+Enter)",
   "search.next": "Next (Enter)",
   "search.close": "Close (Esc)",
-  "search.noResults": "No results"
+  "search.noResults": "No results",
+  "layoutInspector.btnTitle": "Layout Inspector (Edit regions)",
+  "layoutInspector.bannerTitle": "Layout Inspector Mode",
+  "layoutInspector.retranslatePage": "Retranslate This Page",
+  "layoutInspector.saving": "Saving & retranslating...",
+  "layoutInspector.close": "Exit Inspector",
+  "layoutInspector.roleBody": "Body",
+  "layoutInspector.roleCaption": "Caption",
+  "layoutInspector.roleIgnored": "Ignored",
+  "layoutInspector.clickToChange": "Click to change role",
+  "layoutInspector.retranslateFailed": "Failed to request retranslation.",
+  "layoutInspector.activatedToast": "Layout inspector active: Click a block to change its role (body/caption/ignored).",
+  "layoutInspector.openDocFirst": "Please open a document first."
 }

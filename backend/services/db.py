@@ -1473,6 +1473,15 @@ def db_clear_translations(doc_id: str) -> None:
         cursor.execute("DELETE FROM translations WHERE doc_id = ?", (doc_id,))
         conn.commit()
 
+
+def db_clear_page_translation(doc_id: str, page_num: int) -> None:
+    """특정 페이지의 번역 데이터 및 인사이트를 삭제합니다."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM translations WHERE doc_id = ? AND page_num = ?", (doc_id, page_num))
+        cursor.execute("DELETE FROM page_insights WHERE doc_id = ? AND page_num = ?", (doc_id, page_num))
+        conn.commit()
+
 def db_update_document_metadata(doc_id: str, metadata: dict) -> None:
     meta_str = json.dumps(metadata, ensure_ascii=False)
     with get_db() as conn:

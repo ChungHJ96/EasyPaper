@@ -4451,6 +4451,239 @@ body.light-theme .pdf-figure-overlay-handle {
   box-shadow: 0 0 3px rgba(126, 196, 232, 0.25);
 }
 
+/* ── Layout Inspector Mode Styling ── */
+#viewer-scroll-container.layout-inspector-mode .pdf-sentence,
+#viewer-scroll-container.layout-inspector-mode .pdf-highlight-overlay {
+  pointer-events: none !important;
+}
+
+#layout-inspector-btn.active {
+  background: var(--accent-mid, #4a87b5) !important;
+  color: white !important;
+  border-color: var(--accent-mid, #4a87b5) !important;
+  box-shadow: 0 0 3px rgba(126, 196, 232, 0.25);
+}
+
+.pdf-layout-inspector-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.layout-block-box {
+  position: absolute;
+  box-sizing: border-box;
+  border-radius: 3px;
+  pointer-events: auto;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  user-select: none;
+}
+
+.layout-block-box:hover {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.5);
+  z-index: 20;
+}
+
+/* Role 0: Body (본문) - Emerald */
+.layout-block-box.role-0 {
+  border: 1.5px solid rgba(16, 185, 129, 0.85);
+  background: rgba(16, 185, 129, 0.14);
+}
+.layout-block-box.role-0:hover {
+  background: rgba(16, 185, 129, 0.26);
+}
+
+/* Role 1: Caption (캡션) - Amber */
+.layout-block-box.role-1 {
+  border: 1.5px solid rgba(245, 158, 11, 0.9);
+  background: rgba(245, 158, 11, 0.16);
+}
+.layout-block-box.role-1:hover {
+  background: rgba(245, 158, 11, 0.28);
+}
+
+/* Role 2: Ignored (제외) - Gray dashed */
+.layout-block-box.role-2 {
+  border: 1.5px dashed rgba(156, 163, 175, 0.75);
+  background: rgba(107, 114, 128, 0.16);
+}
+.layout-block-box.role-2:hover {
+  background: rgba(107, 114, 128, 0.28);
+}
+
+.layout-block-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 2px;
+  color: #fff;
+  pointer-events: none;
+  opacity: 0.9;
+}
+
+.layout-block-box.role-0 .layout-block-badge {
+  background: #059669;
+}
+.layout-block-box.role-1 .layout-block-badge {
+  background: #d97706;
+}
+.layout-block-box.role-2 .layout-block-badge {
+  background: #4b5563;
+}
+
+/* Popover for changing role */
+.layout-inspector-popover {
+  position: absolute;
+  z-index: 60;
+  background: #1e293b;
+  border: 1px solid #475569;
+  border-radius: 6px;
+  padding: 4px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  pointer-events: auto;
+}
+
+body.light-theme .layout-inspector-popover {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+}
+
+.layout-inspector-role-btn {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  background: transparent;
+  color: #94a3b8;
+  transition: all 0.15s ease;
+}
+
+body.light-theme .layout-inspector-role-btn {
+  color: #64748b;
+}
+
+.layout-inspector-role-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #f8fafc;
+}
+
+body.light-theme .layout-inspector-role-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: #0f172a;
+}
+
+.layout-inspector-role-btn.active.role-0 {
+  background: rgba(16, 185, 129, 0.25);
+  color: #34d399;
+  border-color: rgba(16, 185, 129, 0.5);
+  font-weight: 600;
+}
+.layout-inspector-role-btn.active.role-1 {
+  background: rgba(245, 158, 11, 0.25);
+  color: #fbbf24;
+  border-color: rgba(245, 158, 11, 0.5);
+  font-weight: 600;
+}
+.layout-inspector-role-btn.active.role-2 {
+  background: rgba(156, 163, 175, 0.25);
+  color: #cbd5e1;
+  border-color: rgba(156, 163, 175, 0.5);
+  font-weight: 600;
+}
+
+/* Floating bottom page banner */
+.layout-inspector-page-bar {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border-radius: 24px;
+  background: rgba(15, 23, 42, 0.94);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  color: #f8fafc;
+  font-size: 13px;
+  pointer-events: auto;
+}
+
+body.light-theme .layout-inspector-page-bar {
+  background: rgba(255, 255, 255, 0.96);
+  border-color: rgba(0, 0, 0, 0.12);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  color: #0f172a;
+}
+
+.layout-inspector-bar-title {
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.layout-inspector-bar-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.layout-inspector-btn-action {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 12px;
+  border-radius: 14px;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.layout-inspector-btn-retranslate {
+  background: #2563eb;
+  color: #fff;
+}
+.layout-inspector-btn-retranslate:hover {
+  background: #1d4ed8;
+}
+.layout-inspector-btn-retranslate:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.layout-inspector-btn-close {
+  background: rgba(255, 255, 255, 0.12);
+  color: #e2e8f0;
+}
+body.light-theme .layout-inspector-btn-close {
+  background: rgba(0, 0, 0, 0.08);
+  color: #334155;
+}
+.layout-inspector-btn-close:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+body.light-theme .layout-inspector-btn-close:hover {
+  background: rgba(0, 0, 0, 0.14);
+}
+
 /* ── Chat Input Quote Area Image Preview ── */
 .chat-quote-img {
   max-height: 80px;

@@ -508,3 +508,76 @@ def test_cross_page_continuation_heading_guard():
         "computer systems where they are stored."
     )
 
+
+def test_reassemble_page_from_blocks():
+    """사용자 override에 따른 블록 재조립(본문, 캡션, 제외) 기능 검증."""
+    from services.pdf_parser import reassemble_page_from_blocks
+
+    page = {
+        "page_num": 1,
+        "text": "Initial text",
+        "blocks": [
+            {"bbox": [100, 100, 900, 200], "text": "Body sentence 1.", "type": 0},
+            {"bbox": [100, 500, 900, 600], "text": "Figure 1. A diagram.", "type": 1},
+        ],
+        "ignored_blocks": [
+            {"bbox": [50, 20, 200, 40], "text": "Downloaded from Wiley Online", "type": 2},
+        ],
+    }
+
+    # 사용자가 'Downloaded from Wiley Online'을 본문(type 0)으로 복구하고, 'Figure 1'을 제외(type 2)로 변경
+    new_blocks = [
+        {"bbox": [50, 20, 200, 40], "text": "Downloaded from Wiley Online", "type": 0},
+        {"bbox": [100, 100, 900, 200], "text": "Body sentence 1.", "type": 0},
+        {"bbox": [100, 500, 900, 600], "text": "Figure 1. A diagram.", "type": 2},
+    ]
+
+    updated = reassemble_page_from_blocks(page, new_blocks)
+    assert updated["user_edited"] is True
+    assert len(updated["blocks"]) == 2
+    assert updated["blocks"][0]["text"] == "Downloaded from Wiley Online"
+    assert updated["blocks"][1]["text"] == "Body sentence 1."
+    assert len(updated["ignored_blocks"]) == 1
+    assert updated["ignored_blocks"][0]["text"] == "Figure 1. A diagram."
+    assert "Downloaded from Wiley Online\n\nBody sentence 1." in updated["text"]
+    assert "Figure 1" not in updated["text"]
+
+
+def test_clear_page_translation_isolates_pages(tmp_path, monkeypatch):
+    """특정 페이지만 번역 캐시와 DB가 삭제되고 다른 페이지는 유지되는지 검증."""
+    from config import CACHE_DIR
+    from services.cache import save_translation_cache, get_cached_translation, clear_page_translation_cache
+    from services.db import db_save_translation, db_get_translation, db_clear_page_translation
+
+    doc_id = "test-doc-page-isolation"
+    # 캐시 파일 생성
+    save_translation_cache(doc_id, 1, "Page 1 Korean", suffix="ko_academic")
+    save_translation_cache(doc_id, 2, "Page 2 Korean", suffix="ko_academic")
+    save_translation_cache(doc_id, 10, "Page 10 Korean", suffix="ko_academic")
+
+    # DB 저장
+    db_save_translation(doc_id, 1, "Page 1 Korean", suffix="ko_academic")
+    db_save_translation(doc_id, 2, "Page 2 Korean", suffix="ko_academic")
+    db_save_translation(doc_id, 10, "Page 10 Korean", suffix="ko_academic")
+
+    # 1페이지만 삭제
+    clear_page_translation_cache(doc_id, 1)
+    db_clear_page_translation(doc_id, 1)
+
+    # 1페이지는 삭제되어야 함
+    assert get_cached_translation(doc_id, 1, suffix="ko_academic") is None
+    assert db_get_translation(doc_id, 1, suffix="ko_academic") is None
+
+    # 2페이지와 10페이지는 유지되어야 함 (10이 1로 시작하지만 접두사 오탐 방지)
+    assert get_cached_translation(doc_id, 2, suffix="ko_academic") == "Page 2 Korean"
+    assert db_get_translation(doc_id, 2, suffix="ko_academic") == "Page 2 Korean"
+    assert get_cached_translation(doc_id, 10, suffix="ko_academic") == "Page 10 Korean"
+    assert db_get_translation(doc_id, 10, suffix="ko_academic") == "Page 10 Korean"
+
+    # 정리
+    clear_page_translation_cache(doc_id, 2)
+    clear_page_translation_cache(doc_id, 10)
+    db_clear_page_translation(doc_id, 2)
+    db_clear_page_translation(doc_id, 10)
+
+

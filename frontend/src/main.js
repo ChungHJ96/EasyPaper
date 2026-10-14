@@ -14,7 +14,7 @@ import DOMPurify from 'dompurify'
 import { mountArticleViewer } from './articleViewer.js'
 import { uploadPDF, importURL, getArticleAPI, checkHealth, streamTranslation, getJobStatus, getPageTranslation, loginAPI, logoutAPI, checkAuthAPI, changeCredentialsAPI, getSkipLoginAPI, setSkipLoginAPI, getSystemSettingsAPI, saveSystemSettingsAPI, restartJobAPI, streamPullModelAPI, deleteModelAPI, streamChatAPI, clearTranslationCacheAPI, clearPagesCacheAPI, clearSingleDocCacheAPI, getChatHistoryAPI, cancelJobAPI, triggerSystemUpdateAPI, checkForUpdateAPI, streamPageInsightAPI, getOllamaStatusAPI, streamInstallOllamaAPI, fetchCliAvailability, getUpdateCheckConfigAPI, setUpdateCheckConfigAPI, getPostUpdateNoticeAPI, streamCompareChatAPI, getCompareChatHistoryAPI, getFullChangelogAPI, getChatSessionsAPI, getCompareChatSessionsAPI, getSuggestedQuestionsAPI, fetchDocumentTypesAPI, getWorkspaceSettingsAPI, patchWorkspaceSettingsAPI, patchDocumentClassificationAPI, getDocumentClassificationAPI, confirmDocumentClassificationAPI, estimateInsightJobAPI, startInsightJobAPI, getInsightJobStatusAPI, cancelInsightJobAPI, getLanguagesAPI, getLanguageSettingsAPI, saveLanguageSettingsAPI, patchDocumentLanguagesAPI, patchDocumentProcessingPolicyAPI, retryDocumentTaskAPI, cancelDocumentTaskAPI, createReparsePreviewAPI, getReparsePreviewAPI, applyReparsePreviewAPI, getDocumentChaptersAPI, getChapterSummaryAPI, getFullSummaryEstimateAPI, startFullSummaryAPI, getFullSummaryStatusAPI } from './api.js'
 import { refreshTextLayerGeometry, loadPDF, renderScrollView, scrollToPage, reRenderAll, getScale, getTotalPages, getPDFOutline, renderFigureCrop, getPDFPageText, clearPageTextCache } from './pdfViewer.js'
-import { fetchLibrary, fetchLibraryDoc, fetchLibraryFolders, createLibraryFolder, updateLibraryFolder, deleteLibraryFolder, moveLibraryDocuments, deleteLibraryDoc, fetchLibraryTranslation, fetchLibraryDocImages, updateLibraryDocMetadata, updateLibraryDocTitle, updateLibraryTranslation, fetchLibraryTrash, restoreLibraryDoc, emptyLibraryTrash, deleteLibraryDocPermanently, searchLibrary, exportAnnotatedPdf, fetchLibraryReferences, fetchLibraryPdfLinks, fetchPrimer, regeneratePrimer, fetchLibraryBibliography, fetchLibraryGraph, fetchGraphNodeQuestions, searchGraphNodes, fetchReadingRecommendations, fetchCachedReadingRecommendations, fetchLibraryHeatmapMatrix, sendReadingHeartbeat, fetchPaperTagOntology, updatePaperTags, reclassifyPaperTags } from './library.js'
+import { fetchLibrary, fetchLibraryDoc, fetchLibraryFolders, createLibraryFolder, updateLibraryFolder, deleteLibraryFolder, moveLibraryDocuments, deleteLibraryDoc, fetchLibraryTranslation, fetchLibraryDocImages, updateLibraryDocMetadata, updateLibraryDocTitle, updateLibraryTranslation, fetchLibraryTrash, restoreLibraryDoc, emptyLibraryTrash, deleteLibraryDocPermanently, searchLibrary, exportAnnotatedPdf, fetchLibraryReferences, fetchLibraryPdfLinks, fetchPrimer, regeneratePrimer, fetchLibraryBibliography, fetchLibraryGraph, fetchGraphNodeQuestions, searchGraphNodes, fetchReadingRecommendations, fetchCachedReadingRecommendations, fetchLibraryHeatmapMatrix, sendReadingHeartbeat, fetchPaperTagOntology, updatePaperTags, reclassifyPaperTags, fetchLibraryPageBlocks, updateLibraryPageBlocks } from './library.js'
 import { ensureLocalResourceIds, hasPendingAnnotationSync, recordLocalResourceChange, syncDocumentAnnotations } from './annotationSync.js'
 import { icon } from './icons.js'
 import { formatTranslationHtml, applyKatexToElement, linkPageCitations } from './textFormat.js'
@@ -103,6 +103,8 @@ const state = {
   activeHighlightColor: '#eab308', // 기본 하이라이트 노란색
   activeUnderlineColor: '#ef4444',  // 기본 밑줄 빨간색
   isCropMode: false,           // 영역 캡처 모드 여부
+  layoutInspectorActive: false, // 레이아웃 인스펙터 모드 활성화 여부
+  layoutPageBlocks: {},        // pageNum -> { blocks, parserEngine, hasChanges }
   isSelectionDragging: false,   // 마우스 드래그 선택 중인지 여부
   pdfPageSentences: {},        // pageNum → sentenceRanges 보관용
   pdfPageElements: {},         // pageNum → elRanges 보관용
@@ -857,6 +859,7 @@ const memosHideAllBtn   = $('memos-hide-all-btn')
 const translationScopeBtn = $('translation-scope-btn')
 const retranslateBtn    = $('retranslate-btn')
 const captureAreaBtn    = $('capture-area-btn')
+const layoutInspectorBtn = $('layout-inspector-btn')
 const cancelTransBtn    = $('cancel-trans-btn')
 const resumeTransBtn    = $('resume-trans-btn')
 // (viewer/chat pickers are now ProviderModelPicker instances – see below)
@@ -2131,6 +2134,7 @@ function updatePageDisplay(pageNum) {
   if (pageNum === state.currentPage) return
   state.currentPage = pageNum
   pageInput.value = pageNum
+  updateLayoutInspectorBannerPage()
   scheduleSaveLastReadPage(pageNum)
 }
 
@@ -10455,6 +10459,8 @@ async function openFromLibrary(doc, shouldPushState = true) {
     loadDocumentImages(doc.id)
     loadDocumentReferences(doc.id)
     loadDocumentPdfLinks(doc.id)
+    toggleLayoutInspector(false)
+    state.layoutPageBlocks = {}
     state.filename   = doc.filename
     state.currentDocId = doc.id
     state.currentDocMetadata = doc.metadata || {}
@@ -13390,6 +13396,9 @@ window.onTextLayerRendered = (textLayerDiv, pageNum) => {
   renderPdfLinksOverlay(textLayerDiv, pageNum)
   renderCitationOverlayLayer(textLayerDiv, pageNum)
   renderFigureRefOverlayLayer(textLayerDiv, pageNum)
+  if (state.layoutInspectorActive) {
+    renderLayoutInspectorOverlay(textLayerDiv, pageNum)
+  }
 
   if (viewerSearchState.active && viewerSearchState.query && viewerSearchState.scope !== 'trans') {
     renderPdfSearchHighlightsForPage(pageNum, viewerSearchState.query, viewerSearchState.matches[viewerSearchState.currentIndex])
@@ -18669,6 +18678,7 @@ function toggleCropMode(forceState) {
   state.isCropMode = forceState !== undefined ? forceState : !state.isCropMode
 
   if (state.isCropMode) {
+    if (state.layoutInspectorActive) toggleLayoutInspector(false)
     viewerScrollContainer.classList.add('crop-mode')
     if (captureAreaBtn) captureAreaBtn.classList.add('active')
     showToast("마우스로 드래그하여 질문할 영역을 선택하세요.", "success")
@@ -18692,6 +18702,273 @@ if (captureAreaBtn) {
 
 // 캡처 툴 초기화 실행
 initCropTool()
+
+// ── Layout Inspector (레이아웃 인스펙터) ──────────────────────────
+
+function getRoleLabel(type) {
+  if (type === 0) return t('viewer:layoutInspector.roleBody', '본문')
+  if (type === 1) return t('viewer:layoutInspector.roleCaption', '캡션')
+  return t('viewer:layoutInspector.roleIgnored', '제외')
+}
+
+let activeRolePopover = null
+
+function closeLayoutInspectorPopover() {
+  if (activeRolePopover) {
+    activeRolePopover.remove()
+    activeRolePopover = null
+  }
+}
+
+function showRolePopover(box, block, pageNum) {
+  closeLayoutInspectorPopover()
+
+  const popover = document.createElement('div')
+  popover.className = 'layout-inspector-popover'
+
+  const roles = [
+    { type: 0, label: t('viewer:layoutInspector.roleBody', '본문'), class: 'role-0' },
+    { type: 1, label: t('viewer:layoutInspector.roleCaption', '캡션'), class: 'role-1' },
+    { type: 2, label: t('viewer:layoutInspector.roleIgnored', '제외'), class: 'role-2' },
+  ]
+
+  roles.forEach(r => {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = `layout-inspector-role-btn ${r.class} ${block.type === r.type ? 'active' : ''}`
+    btn.textContent = r.label
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      setBlockRole(box, block, r.type, pageNum)
+      closeLayoutInspectorPopover()
+    })
+    popover.appendChild(btn)
+  })
+
+  const topPos = Math.max(4, box.offsetTop - 36)
+  const leftPos = Math.max(4, Math.min(box.offsetLeft, (box.offsetParent?.offsetWidth || 500) - 180))
+
+  popover.style.top = `${topPos}px`
+  popover.style.left = `${leftPos}px`
+
+  box.offsetParent.appendChild(popover)
+  activeRolePopover = popover
+
+  setTimeout(() => {
+    const onDocClick = (e) => {
+      if (!popover.contains(e.target) && e.target !== box) {
+        closeLayoutInspectorPopover()
+        document.removeEventListener('click', onDocClick)
+      }
+    }
+    document.addEventListener('click', onDocClick)
+  }, 10)
+}
+
+function setBlockRole(box, block, newRole, pageNum) {
+  if (block.type === newRole) return
+  block.type = newRole
+
+  box.classList.remove('role-0', 'role-1', 'role-2')
+  box.classList.add(`role-${newRole}`)
+
+  const badge = box.querySelector('.layout-block-badge')
+  if (badge) badge.textContent = getRoleLabel(newRole)
+
+  box.title = `${getRoleLabel(newRole)}: ${block.text ? block.text.slice(0, 100) : ''}... (${t('viewer:layoutInspector.clickToChange', '클릭하여 역할 변경')})`
+
+  if (!state.layoutPageBlocks[pageNum]) {
+    state.layoutPageBlocks[pageNum] = { blocks: [], hasChanges: true }
+  }
+  state.layoutPageBlocks[pageNum].hasChanges = true
+}
+
+function renderLayoutInspectorOverlay(textLayerDiv, pageNum) {
+  const inner = textLayerDiv.parentElement
+  if (!inner) return
+
+  const oldLayer = inner.querySelector('.pdf-layout-inspector-layer')
+  if (oldLayer) oldLayer.remove()
+
+  if (!state.layoutInspectorActive || !state.currentDocId) return
+
+  const layer = document.createElement('div')
+  layer.className = 'pdf-layout-inspector-layer'
+  layer.dataset.page = pageNum
+  inner.appendChild(layer)
+
+  if (!state.layoutPageBlocks) state.layoutPageBlocks = {}
+  const pageData = state.layoutPageBlocks[pageNum]
+
+  if (!pageData) {
+    fetchLibraryPageBlocks(state.currentDocId, pageNum).then(data => {
+      state.layoutPageBlocks[pageNum] = {
+        blocks: data.blocks || [],
+        parserEngine: data.parser_engine,
+        hasChanges: false
+      }
+      if (state.layoutInspectorActive && layer.isConnected) {
+        _populateInspectorBlocks(layer, pageNum)
+      }
+    }).catch(err => {
+      console.warn(`Failed to fetch blocks for page ${pageNum}:`, err)
+    })
+    return
+  }
+
+  _populateInspectorBlocks(layer, pageNum)
+}
+
+function _populateInspectorBlocks(layer, pageNum) {
+  layer.innerHTML = ''
+  const pageData = state.layoutPageBlocks?.[pageNum]
+  if (!pageData || !pageData.blocks) return
+
+  pageData.blocks.forEach(block => {
+    const box = document.createElement('div')
+    box.className = `layout-block-box role-${block.type}`
+    box.dataset.blockId = block.id
+
+    const [left, top, width, height] = block.pct_bbox || [0, 0, 0, 0]
+    box.style.left = `${left}%`
+    box.style.top = `${top}%`
+    box.style.width = `${width}%`
+    box.style.height = `${height}%`
+
+    const badge = document.createElement('span')
+    badge.className = 'layout-block-badge'
+    badge.textContent = getRoleLabel(block.type)
+    box.appendChild(badge)
+
+    const preview = block.text ? block.text.slice(0, 100).replace(/\n+/g, ' ') : ''
+    box.title = `${getRoleLabel(block.type)}: ${preview}... (${t('viewer:layoutInspector.clickToChange', '클릭하여 역할 변경')})`
+
+    box.addEventListener('click', (e) => {
+      e.stopPropagation()
+      e.preventDefault()
+      showRolePopover(box, block, pageNum)
+    })
+
+    layer.appendChild(box)
+  })
+}
+
+function renderLayoutInspectorBanner() {
+  removeLayoutInspectorBanner()
+  const banner = document.createElement('div')
+  banner.id = 'layout-inspector-banner'
+  banner.className = 'layout-inspector-page-bar'
+
+  const title = document.createElement('div')
+  title.className = 'layout-inspector-bar-title'
+  title.innerHTML = `
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2"/>
+      <path d="M3 9h18"/>
+      <path d="M9 21V9"/>
+    </svg>
+    <span id="layout-inspector-banner-text">${t('viewer:layoutInspector.bannerTitle', '레이아웃 검사 모드')} (p.${state.currentPage})</span>
+  `
+  banner.appendChild(title)
+
+  const actions = document.createElement('div')
+  actions.className = 'layout-inspector-bar-actions'
+
+  const retransBtn = document.createElement('button')
+  retransBtn.type = 'button'
+  retransBtn.id = 'layout-inspector-retranslate-btn'
+  retransBtn.className = 'layout-inspector-btn-action layout-inspector-btn-retranslate'
+  retransBtn.textContent = t('viewer:layoutInspector.retranslatePage', '이 페이지 재번역')
+  retransBtn.addEventListener('click', async () => {
+    const pageNum = state.currentPage
+    const pageData = state.layoutPageBlocks?.[pageNum]
+    if (!pageData) {
+      showToast(`${pageNum}페이지 블록 데이터가 아직 로드되지 않았습니다.`, 'warning')
+      return
+    }
+    retransBtn.disabled = true
+    retransBtn.textContent = t('viewer:layoutInspector.saving', '저장 및 재번역 중...')
+    try {
+      await updateLibraryPageBlocks(state.currentDocId, pageNum, pageData.blocks)
+      pageData.hasChanges = false
+      state.translatedPages.delete(pageNum)
+      state.translatingPages.delete(pageNum)
+      delete state.translationCache[pageNum]
+      delete state.translationSentences[pageNum]
+      const contentEl = $(`trans-content-${pageNum}`)
+      if (contentEl) renderedTranslationContent.delete(contentEl)
+      showToast(`${pageNum}페이지 재번역을 시작합니다.`, 'success')
+      translatePage(pageNum)
+    } catch (err) {
+      console.error('Failed to update blocks and retranslate:', err)
+      showToast(err.message || t('viewer:layoutInspector.retranslateFailed', '재번역 요청 실패'), 'error')
+    } finally {
+      retransBtn.disabled = false
+      retransBtn.textContent = t('viewer:layoutInspector.retranslatePage', '이 페이지 재번역')
+    }
+  })
+  actions.appendChild(retransBtn)
+
+  const closeBtn = document.createElement('button')
+  closeBtn.type = 'button'
+  closeBtn.className = 'layout-inspector-btn-action layout-inspector-btn-close'
+  closeBtn.textContent = t('viewer:layoutInspector.close', '검사 종료')
+  closeBtn.addEventListener('click', () => {
+    toggleLayoutInspector(false)
+  })
+  actions.appendChild(closeBtn)
+
+  banner.appendChild(actions)
+  const container = viewerScrollContainer?.parentElement || document.body
+  container.appendChild(banner)
+}
+
+function updateLayoutInspectorBannerPage() {
+  const textEl = $('layout-inspector-banner-text')
+  if (textEl) {
+    textEl.textContent = `${t('viewer:layoutInspector.bannerTitle', '레이아웃 검사 모드')} (p.${state.currentPage})`
+  }
+}
+
+function removeLayoutInspectorBanner() {
+  const existing = $('layout-inspector-banner')
+  if (existing) existing.remove()
+}
+
+function toggleLayoutInspector(forceState) {
+  state.layoutInspectorActive = forceState !== undefined ? forceState : !state.layoutInspectorActive
+
+  if (state.layoutInspectorActive) {
+    if (state.isCropMode) toggleCropMode(false)
+    viewerScrollContainer.classList.add('layout-inspector-mode')
+    if (layoutInspectorBtn) layoutInspectorBtn.classList.add('active')
+    renderLayoutInspectorBanner()
+    document.querySelectorAll('.textLayer').forEach(textLayerDiv => {
+      const pageWrapper = textLayerDiv.closest('.pdf-page-wrapper')
+      if (pageWrapper) {
+        const pageNum = parseInt(pageWrapper.dataset.page)
+        renderLayoutInspectorOverlay(textLayerDiv, pageNum)
+      }
+    })
+    showToast(t('viewer:layoutInspector.activatedToast', '레이아웃 인스펙터 활성화: 블록을 클릭하여 역할(본문/캡션/제외)을 변경하세요.'), 'info')
+  } else {
+    viewerScrollContainer.classList.remove('layout-inspector-mode')
+    if (layoutInspectorBtn) layoutInspectorBtn.classList.remove('active')
+    document.querySelectorAll('.pdf-layout-inspector-layer').forEach(el => el.remove())
+    closeLayoutInspectorPopover()
+    removeLayoutInspectorBanner()
+  }
+}
+
+if (layoutInspectorBtn) {
+  layoutInspectorBtn.addEventListener('click', () => {
+    if (!state.currentDocId) {
+      showToast(t('viewer:layoutInspector.openDocFirst', '문서를 먼저 열어주세요.'), 'error')
+      return
+    }
+    toggleLayoutInspector()
+  })
+}
 
 // ── 번역 창 접기 및 너비 크기 조절 (드래그/버튼 연동) ──────────────────────
 function updateTransPaneWidth(newWidth) {

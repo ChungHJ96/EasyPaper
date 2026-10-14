@@ -5,7 +5,7 @@ import json
 import base64
 from typing import Optional, List
 from config import LIBRARY_DIR, UPLOAD_DIR
-from services.cache import clear_session_cache
+from services.cache import clear_session_cache, clear_page_translation_cache
 from services.db import (
     db_save_document,
     db_get_document,
@@ -17,6 +17,7 @@ from services.db import (
     db_save_translation,
     db_get_translation,
     db_clear_translations,
+    db_clear_page_translation,
     db_save_page_insight,
     db_get_page_insight,
     db_clear_page_insights,
@@ -374,6 +375,12 @@ def get_translation_full(doc_id: str, page_num: int, suffix: str = "", fallback:
 def clear_translations(doc_id: str) -> None:
     """데이터베이스에서 모든 번역 데이터를 지웁니다."""
     db_clear_translations(doc_id)
+
+
+def clear_page_translation(doc_id: str, page_num: int) -> None:
+    """특정 페이지의 DB 번역 결과 및 디스크 캐시를 삭제합니다."""
+    db_clear_page_translation(doc_id, page_num)
+    clear_page_translation_cache(doc_id, page_num)
 
 
 # ── 페이지 인사이트 (키워드/단어, 요약) ─────────────────────────────────────────

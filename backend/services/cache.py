@@ -78,6 +78,19 @@ def clear_session_cache(session_id: str) -> None:
             os.remove(os.path.join(CACHE_DIR, fname))
 
 
+def clear_page_translation_cache(session_id: str, page_num: int) -> None:
+    """특정 페이지의 번역 캐시 파일({session_id}_page_{page_num}*.json)을 삭제합니다."""
+    prefix = f"{session_id}_page_{page_num}"
+    if not os.path.exists(CACHE_DIR):
+        return
+    for fname in os.listdir(CACHE_DIR):
+        if fname == f"{prefix}.json" or fname.startswith(f"{prefix}_"):
+            try:
+                os.remove(os.path.join(CACHE_DIR, fname))
+            except OSError:
+                pass
+
+
 _PAGES_CACHE_SUFFIX = "_pages_extract.json"
 
 

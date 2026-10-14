@@ -4407,4 +4407,16 @@
   ,"viewer:a11y.focusPinned": { "description": "Screen reader status when sentence Focus is pinned." }
   ,"viewer:a11y.focusMoved": { "description": "Screen reader status after keyboard Focus navigation." }
   ,"viewer:focus.performanceFallback": { "description": "Notice shown when Focus switches to a lower-cost visual mode." }
+  ,"viewer:layoutInspector.btnTitle": { "description": "Toolbar button tooltip for the Layout Inspector." }
+  ,"viewer:layoutInspector.bannerTitle": { "description": "Title text on the Layout Inspector bottom banner." }
+  ,"viewer:layoutInspector.retranslatePage": { "description": "Button label to retranslate current page after layout changes." }
+  ,"viewer:layoutInspector.saving": { "description": "Button state label while saving block changes and retranslating." }
+  ,"viewer:layoutInspector.close": { "description": "Button label to exit Layout Inspector mode." }
+  ,"viewer:layoutInspector.roleBody": { "description": "Label for body text block role." }
+  ,"viewer:layoutInspector.roleCaption": { "description": "Label for figure/table caption block role." }
+  ,"viewer:layoutInspector.roleIgnored": { "description": "Label for ignored block role." }
+  ,"viewer:layoutInspector.clickToChange": { "description": "Hint tooltip on layout blocks to click and change role." }
+  ,"viewer:layoutInspector.retranslateFailed": { "description": "Error message when page retranslation fails." }
+  ,"viewer:layoutInspector.activatedToast": { "description": "Toast message when layout inspector mode is toggled on." }
+  ,"viewer:layoutInspector.openDocFirst": { "description": "Toast message when trying to activate inspector without an open document." }
 }

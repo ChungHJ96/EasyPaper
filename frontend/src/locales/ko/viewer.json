@@ -91,5 +91,17 @@
   "search.prev": "이전 (Shift+Enter)",
   "search.next": "다음 (Enter)",
   "search.close": "닫기 (Esc)",
-  "search.noResults": "결과 없음"
+  "search.noResults": "결과 없음",
+  "layoutInspector.btnTitle": "레이아웃 인스펙터 (구역 편집)",
+  "layoutInspector.bannerTitle": "레이아웃 검사 모드",
+  "layoutInspector.retranslatePage": "이 페이지 재번역",
+  "layoutInspector.saving": "저장 및 재번역 중...",
+  "layoutInspector.close": "검사 종료",
+  "layoutInspector.roleBody": "본문",
+  "layoutInspector.roleCaption": "캡션",
+  "layoutInspector.roleIgnored": "제외",
+  "layoutInspector.clickToChange": "클릭하여 역할 변경",
+  "layoutInspector.retranslateFailed": "재번역 요청 실패",
+  "layoutInspector.activatedToast": "레이아웃 인스펙터 활성화: 블록을 클릭하여 역할(본문/캡션/제외)을 변경하세요.",
+  "layoutInspector.openDocFirst": "문서를 먼저 열어주세요."
 }

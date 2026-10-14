@@ -453,6 +453,8 @@ def sanitize_mineru_pages(pages: List[Dict[str, Any]], pdf_path: str) -> List[Di
 
     for p_idx in range(len(pages)):
         curr_p = pages[p_idx]
+        if curr_p.get("user_edited"):
+            continue
         has_next = p_idx + 1 < len(pages) and p_idx + 1 < len(fitz_texts)
         new_curr_blocks = []
         spillover_blocks = []
@@ -600,6 +602,7 @@ def _build_mineru_pages(content_list: Any, total_pages: int = 0, pdf_path: Optio
         items = pages_items.get(page_idx, [])
         body_blocks: List[Dict[str, Any]] = []
         caption_blocks: List[Dict[str, Any]] = []
+        ignored_blocks: List[Dict[str, Any]] = []
 
         for item in items:
             raw_txt = _mineru_item_text(item)
@@ -615,13 +618,32 @@ def _build_mineru_pages(content_list: Any, total_pages: int = 0, pdf_path: Optio
 
             t = item.get("type")
             if t in ("header", "footer", "page_footnote", "page_number", "aside_text"):
-                # 머리말, 꼬리말, 쪽번호, 각주, 측면 마진 슬러그(aside_text)는 번역 스트림에서 완전 제외
+                # 머리말, 꼬리말, 쪽번호, 각주, 측면 마진 슬러그(aside_text)는 번역 스트림에서 제외하되
+                # 레이아웃 인스펙터에서 확인 및 복구할 수 있도록 ignored_blocks에 보존
+                ignored_blocks.append({
+                    "bbox": bbox,
+                    "text": txt,
+                    "type": 2,
+                    "raw_type": t,
+                })
                 continue
 
             if is_margin_block(bbox, 1000.0, 1000.0) and (_DOWNLOAD_METADATA_RE.search(txt) or is_metadata_text(txt, page_idx, detected_title)):
+                ignored_blocks.append({
+                    "bbox": bbox,
+                    "text": txt,
+                    "type": 2,
+                    "raw_type": "metadata",
+                })
                 continue
 
             if is_metadata_text(txt, page_idx, detected_title):
+                ignored_blocks.append({
+                    "bbox": bbox,
+                    "text": txt,
+                    "type": 2,
+                    "raw_type": "metadata",
+                })
                 continue
 
             if t in ("table", "image", "chart"):
@@ -630,12 +652,14 @@ def _build_mineru_pages(content_list: Any, total_pages: int = 0, pdf_path: Optio
                     "bbox": bbox,
                     "text": clean_cap or txt,
                     "type": 1,
+                    "raw_type": t,
                 })
             else:
                 body_blocks.append({
                     "bbox": bbox,
                     "text": txt,
                     "type": 0,
+                    "raw_type": t or "text",
                 })
 
         body_str = "\n\n".join(b["text"] for b in body_blocks).strip()
@@ -657,12 +681,40 @@ def _build_mineru_pages(content_list: Any, total_pages: int = 0, pdf_path: Optio
             "page_num": page_idx + 1,
             "text": text_content,
             "blocks": all_blocks,
+            "ignored_blocks": ignored_blocks,
             "parser_engine": "mineru",
         })
 
     if pages:
         pages = filter_repeated_headers_footers(pages, paper_title=detected_title)
+
     return pages
+
+
+def reassemble_page_from_blocks(page: Dict[str, Any], blocks: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """사용자가 레이아웃 인스펙터에서 수정한 블록 목록의 type(0: 본문, 1: 캡션, 2: 제외)에 따라
+    페이지 본문 텍스트를 재구성하고 blocks와 ignored_blocks를 분리 저장합니다."""
+    body_blocks = [b for b in blocks if b.get("type") == 0 and b.get("text", "").strip()]
+    caption_blocks = [b for b in blocks if b.get("type") == 1 and b.get("text", "").strip()]
+    ignored_blocks = [b for b in blocks if b.get("type") not in (0, 1) and b.get("text", "").strip()]
+
+    body_str = "\n\n".join(b["text"].strip() for b in body_blocks).strip()
+    caption_str = "\n\n".join(b["text"].strip() for b in caption_blocks).strip()
+
+    if body_str and caption_str:
+        p_text = f"{body_str}\n\n{caption_str}"
+    elif body_str:
+        p_text = body_str
+    elif caption_str:
+        p_text = caption_str
+    else:
+        p_text = ""
+
+    page["text"] = clean_text_for_translation(p_text)
+    page["blocks"] = body_blocks + caption_blocks
+    page["ignored_blocks"] = ignored_blocks
+    page["user_edited"] = True
+    return page
 
 
 def _extract_pages_mineru(pdf_path: str) -> List[Dict[str, Any]]:

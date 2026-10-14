@@ -9,7 +9,7 @@ from services.library import (
     list_documents, search_documents, get_document, permanently_delete_document,
     soft_delete_document, restore_document, empty_trash,
     get_translation, get_pdf_path, get_cover_path,
-    patch_document_metadata,
+    patch_document_metadata, clear_page_translation,
     get_chat_quote_image_path, list_folders, create_folder, update_folder, delete_folder, move_documents_to_folder
 )
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -59,6 +59,19 @@ class DocumentProcessingPolicyUpdateRequest(BaseModel):
 
 class ReparsePreviewRequest(BaseModel):
     candidate_engine: str
+
+
+class PageBlockItem(BaseModel):
+    id: Optional[str] = None
+    bbox: list[float]
+    pct_bbox: Optional[list[float]] = None
+    text: str
+    type: int  # 0: body, 1: caption, 2: ignored
+    raw_type: Optional[str] = None
+
+
+class PageBlocksUpdateRequest(BaseModel):
+    blocks: list[PageBlockItem]
 
 
 
@@ -1023,6 +1036,167 @@ async def get_library_figure_image(doc_id: str, index: int, current_user: str = 
     if png_bytes is None:
         raise HTTPException(status_code=404, detail="Figure 이미지를 생성할 수 없습니다.")
     return Response(content=png_bytes, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+
+
+@router.get("/library/{doc_id}/pages/{page_num}/blocks")
+async def get_library_page_blocks(
+    doc_id: str,
+    page_num: int,
+    current_user: str = Depends(get_current_user)
+):
+    """특정 페이지의 파서 추출 블록(본문, 캡션, 제외 블록)과 바운딩 박스를 반환합니다."""
+    doc = require_owned_document(doc_id, current_user)
+    pdf_path = get_pdf_path(doc_id)
+    if not pdf_path or not os.path.exists(pdf_path):
+        raise HTTPException(status_code=404, detail="PDF 파일을 찾을 수 없습니다.")
+
+    # 1. sessions 또는 캐시에서 페이지 목록 조회
+    from routers.upload import sessions
+    pages = sessions.get(doc_id, {}).get("pages")
+    if not pages:
+        from services.cache import get_cached_pages
+        pages = get_cached_pages(
+            doc_id, pdf_path, doc.get("parser_engine"), doc.get("parser_version"),
+            doc.get("content_revision")
+        )
+    if not pages:
+        from services.pdf_parser import extract_pages
+        pages = extract_pages(pdf_path, engine=doc.get("parser_engine", "pymupdf"))
+
+    target_page = next((p for p in pages if p.get("page_num") == page_num), None)
+    if not target_page:
+        raise HTTPException(status_code=404, detail=f"{page_num}페이지를 찾을 수 없습니다.")
+
+    # 페이지 치수 확인
+    pw = float(target_page.get("width") or 0.0)
+    ph = float(target_page.get("height") or 0.0)
+    if pw <= 0 or ph <= 0:
+        try:
+            import fitz
+            with fitz.open(pdf_path) as d:
+                if 0 <= page_num - 1 < len(d):
+                    p_fitz = d[page_num - 1]
+                    pw = float(p_fitz.rect.width)
+                    ph = float(p_fitz.rect.height)
+        except Exception:
+            pw, ph = 612.0, 792.0
+
+    raw_blocks = target_page.get("blocks", [])
+    raw_ignored = target_page.get("ignored_blocks", [])
+
+    all_blocks = []
+    engine = target_page.get("parser_engine") or doc.get("parser_engine") or "pymupdf"
+
+    def _to_pct(bbox):
+        if not bbox or len(bbox) < 4:
+            return [0.0, 0.0, 0.0, 0.0]
+        # MinerU는 0~1000 정규화 좌표계를 사용
+        if engine == "mineru" or (pw <= 0 or (bbox[2] <= 1000.0 and bbox[3] <= 1000.0 and engine != "pymupdf")):
+            left = max(0.0, min(100.0, round(bbox[0] / 10.0, 3)))
+            top = max(0.0, min(100.0, round(bbox[1] / 10.0, 3)))
+            width = max(0.0, min(100.0 - left, round((bbox[2] - bbox[0]) / 10.0, 3)))
+            height = max(0.0, min(100.0 - top, round((bbox[3] - bbox[1]) / 10.0, 3)))
+        else:
+            left = max(0.0, min(100.0, round((bbox[0] / pw) * 100.0, 3)))
+            top = max(0.0, min(100.0, round((bbox[1] / ph) * 100.0, 3)))
+            width = max(0.0, min(100.0 - left, round(((bbox[2] - bbox[0]) / pw) * 100.0, 3)))
+            height = max(0.0, min(100.0 - top, round(((bbox[3] - bbox[1]) / ph) * 100.0, 3)))
+        return [left, top, width, height]
+
+    b_idx = 0
+    for b in raw_blocks:
+        bbox = b.get("bbox", [0.0, 0.0, 0.0, 0.0])
+        all_blocks.append({
+            "id": f"blk_{b_idx}",
+            "bbox": bbox,
+            "pct_bbox": _to_pct(bbox),
+            "text": b.get("text", ""),
+            "type": b.get("type", 0),
+            "raw_type": b.get("raw_type", "text"),
+        })
+        b_idx += 1
+
+    for b in raw_ignored:
+        bbox = b.get("bbox", [0.0, 0.0, 0.0, 0.0])
+        all_blocks.append({
+            "id": f"blk_{b_idx}",
+            "bbox": bbox,
+            "pct_bbox": _to_pct(bbox),
+            "text": b.get("text", ""),
+            "type": 2,
+            "raw_type": b.get("raw_type", "ignored"),
+        })
+        b_idx += 1
+
+    return {
+        "page_num": page_num,
+        "parser_engine": engine,
+        "blocks": all_blocks,
+    }
+
+
+@router.put("/library/{doc_id}/pages/{page_num}/blocks")
+async def update_library_page_blocks(
+    doc_id: str,
+    page_num: int,
+    payload: PageBlocksUpdateRequest,
+    current_user: str = Depends(get_current_user)
+):
+    """사용자가 수정한 블록 역할(type: 0 본문, 1 캡션, 2 제외)에 따라
+    페이지 텍스트를 재구성하고, 해당 페이지의 번역 캐시를 무효화합니다."""
+    doc = require_owned_document(doc_id, current_user)
+    pdf_path = get_pdf_path(doc_id)
+    if not pdf_path or not os.path.exists(pdf_path):
+        raise HTTPException(status_code=404, detail="PDF 파일을 찾을 수 없습니다.")
+
+    from routers.upload import sessions
+    pages = sessions.get(doc_id, {}).get("pages")
+    if not pages:
+        from services.cache import get_cached_pages
+        pages = get_cached_pages(
+            doc_id, pdf_path, doc.get("parser_engine"), doc.get("parser_version"),
+            doc.get("content_revision")
+        )
+    if not pages:
+        from services.pdf_parser import extract_pages
+        pages = extract_pages(pdf_path, engine=doc.get("parser_engine", "pymupdf"))
+
+    target_page = next((p for p in pages if p.get("page_num") == page_num), None)
+    if not target_page:
+        raise HTTPException(status_code=404, detail=f"{page_num}페이지를 찾을 수 없습니다.")
+
+    # 재조립
+    from services.pdf_parser import reassemble_page_from_blocks
+    reassemble_page_from_blocks(target_page, [b.model_dump() for b in payload.blocks])
+
+    # 캐시 저장
+    from services.cache import save_pages_cache
+    save_pages_cache(
+        doc_id, pdf_path, pages, doc.get("parser_engine"), doc.get("parser_version"),
+        doc.get("content_revision")
+    )
+
+    # 활성 세션 메모리 갱신
+    if doc_id in sessions:
+        sessions[doc_id]["pages"] = pages
+
+    # 해당 페이지 번역 캐시 및 DB 결과 삭제
+    clear_page_translation(doc_id, page_num)
+
+    # 검색 청크 인덱스 갱신 (비동기 안전)
+    try:
+        from services.context_retrieval import index_document_chunks
+        index_document_chunks(doc_id, pages)
+    except Exception:
+        pass
+
+    return {
+        "ok": True,
+        "page_num": page_num,
+        "text": target_page.get("text", ""),
+        "blocks_count": len(target_page.get("blocks", [])),
+        "ignored_count": len(target_page.get("ignored_blocks", [])),
+    }
 
 
 @router.get("/library/{doc_id}/references")

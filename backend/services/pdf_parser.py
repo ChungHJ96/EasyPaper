@@ -439,6 +439,77 @@ def filter_repeated_headers_footers(pages: List[Dict[str, Any]], paper_title: st
     return filtered_pages
 
 
+def _estimate_text_bbox_on_page(
+    doc_or_path: Any,
+    page_idx: int,
+    text: str,
+    default_bbox: Optional[List[float]] = None,
+) -> List[float]:
+    """페이지 경계를 넘어 다음 페이지로 유출된(spillover) 텍스트가 다음 페이지에서
+    실제로 차지하는 정확한 바운딩 박스를 PyMuPDF 텍스트 검색을 통해 추정합니다.
+    (더미 박스로 인해 2단 레이아웃 등에서 좌우 컬럼을 가로지르는 오버레이 방지)"""
+    fallback = default_bbox or [70.0, 75.0, 490.0, 350.0]
+    if not text or not text.strip():
+        return fallback
+
+    try:
+        import fitz
+        close_doc = False
+        if isinstance(doc_or_path, str):
+            if not os.path.exists(doc_or_path):
+                return fallback
+            doc = fitz.open(doc_or_path)
+            close_doc = True
+        else:
+            doc = doc_or_path
+
+        try:
+            if page_idx < 0 or page_idx >= len(doc):
+                return fallback
+            page = doc[page_idx]
+            pw, ph = page.rect.width, page.rect.height
+            if pw <= 0 or ph <= 0:
+                return fallback
+
+            words = text.split()
+            first_phrase = " ".join(words[:min(5, len(words))])
+            last_phrase = " ".join(words[max(0, len(words) - 5):])
+
+            r_first = page.search_for(first_phrase)
+            if not r_first and words:
+                r_first = page.search_for(words[0])
+
+            r_last = page.search_for(last_phrase)
+            if not r_last and len(words) > 1:
+                r_last = page.search_for(words[-1])
+
+            all_rects = r_first + r_last
+            if all_rects:
+                x0 = min(r.x0 for r in all_rects) / pw * 1000.0
+                y0 = min(r.y0 for r in all_rects) / ph * 1000.0
+                x1 = max(r.x1 for r in all_rects) / pw * 1000.0
+                y1 = max(r.y1 for r in all_rects) / ph * 1000.0
+                if x0 < 150.0 and x1 < 450.0 and len(words) > 10:
+                    x1 = max(x1, 490.0)
+                return [round(x0, 1), round(y0, 1), round(x1, 1), round(y1, 1)]
+
+            for b in page.get_text("blocks"):
+                if words and words[0] in b[4]:
+                    return [
+                        round(b[0] / pw * 1000.0, 1),
+                        round(b[1] / ph * 1000.0, 1),
+                        round(b[2] / pw * 1000.0, 1),
+                        round(b[3] / ph * 1000.0, 1),
+                    ]
+        finally:
+            if close_doc:
+                doc.close()
+    except Exception:
+        pass
+
+    return fallback
+
+
 def sanitize_mineru_pages(pages: List[Dict[str, Any]], pdf_path: str) -> List[Dict[str, Any]]:
     """이미 파싱/캐시된 MinerU pages에서 다음 페이지로 유출된 블록들을
     실제 PDF 페이지 경계에 맞게 분할하여 보정합니다."""
@@ -462,6 +533,10 @@ def sanitize_mineru_pages(pages: List[Dict[str, Any]], pdf_path: str) -> List[Di
             txt = block.get("text", "")
             b_type = block.get("type", 0)
             bbox = block.get("bbox", [0.0, 0.0, 1000.0, 1000.0])
+            if bbox == [100.0, 100.0, 900.0, 300.0]:
+                bbox = _estimate_text_bbox_on_page(doc, p_idx, txt)
+                block = dict(block)
+                block["bbox"] = bbox
 
             # 헤더/푸터 및 저널 메타데이터, 다운로드 슬러그 블록 정제
             if _DOWNLOAD_METADATA_RE.search(txt) or is_metadata_text(txt, p_idx):
@@ -491,7 +566,7 @@ def sanitize_mineru_pages(pages: List[Dict[str, Any]], pdf_path: str) -> List[Di
 
                     b_next = dict(block)
                     b_next["text"] = part_next
-                    b_next["bbox"] = [100.0, 100.0, 900.0, 300.0]
+                    b_next["bbox"] = _estimate_text_bbox_on_page(doc, p_idx + 1, part_next)
                     spillover_blocks.append(b_next)
                     continue
             new_curr_blocks.append(block)
@@ -577,7 +652,7 @@ def _build_mineru_pages(content_list: Any, total_pages: int = 0, pdf_path: Optio
                 item_next = dict(item)
                 item_next["page_idx"] = p_idx + 1
                 item_next["text"] = part_next
-                item_next["bbox"] = [100.0, 100.0, 900.0, 300.0]
+                item_next["bbox"] = _estimate_text_bbox_on_page(pdf_path, p_idx + 1, part_next)
                 adjusted_items.append(item_next)
                 continue
 

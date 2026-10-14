@@ -6,6 +6,10 @@ import json
 import os
 import sys
 
+os.environ["HJPAPER_ISOLATED_WORKER"] = "1"
+os.environ["EASYPAPER_ISOLATED_WORKER"] = "1"
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
 from services.atomic_io import atomic_write_text
 from services.pdf_diagnostics import diagnose_pages, parser_version, pdf_fingerprint
 from services.pdf_parser import extract_pages, extract_pdf_images
@@ -14,7 +18,7 @@ from services.pdf_parser import extract_pages, extract_pdf_images
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--pdf", required=True)
-    parser.add_argument("--engine", required=True, choices=("opendataloader", "pymupdf", "pdfplumber", "marker", "mineru"))
+    parser.add_argument("--engine", required=True, choices=("pymupdf", "pdfplumber", "marker", "mineru"))
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
 

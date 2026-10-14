@@ -323,20 +323,10 @@ async def save_system_settings(data: SystemSettingsRequest, current_user: str = 
             detail="올바르지 않은 AI 제공업체입니다."
         )
         
-    valid_parsers = ["opendataloader", "pymupdf", "pdfplumber", "marker", "mineru"]
+    valid_parsers = ["mineru", "pymupdf", "pdfplumber", "marker"]
     if pdf_parser_engine not in valid_parsers:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="올바르지 않은 PDF 파서 엔진입니다."
-        )
+        pdf_parser_engine = "mineru"
 
-    # marker(transformers>=5.12.1 필요)와 mineru(transformers<5.0.0 필요)는
-    # 런타임에서 실제로 서로 충돌해 같은 venv에 공존할 수 없다고 확인됐다
-    # (marker는 5 미만에서, mineru는 5 이상에서 각각 다른 이유로 즉시
-    # 크래시함) - 그래서 mineru만 전용 venv(.venv-mineru)에서 돈다. 엔진을
-    # 바꿀 때 필요한 venv가 지금 떠 있는 것과 다르면, 저장 직후 서버를
-    # 재시작해서(시스템 업데이트 때와 동일한 인프라 재사용) 올바른 venv로
-    # 다시 올라오게 한다.
     restart_needed = venv_manager.restart_required_for_engine(pdf_parser_engine)
 
     openai_api_key = "" if data.delete_openai_api_key else (data.openai_api_key.strip() or get_openai_api_key())
@@ -393,93 +383,35 @@ def _is_package_installed(module_name: str) -> bool:
 
 
 def _is_package_installed_in_venv(venv_dir: str, module_name: str) -> bool:
-    """marker/mineru는 이 프로세스가 지금 떠 있는 venv가 아니라 각자 정해진
-    전용 venv에 설치되므로(venv_manager 참고), importlib으로는 확인할 수
-    없다. 그 venv의 site-packages에 실제 패키지 디렉터리가 있는지 직접
-    본다."""
     import glob
-
-    if not venv_manager.is_venv_available(venv_dir):
+    site_packages = glob.glob(os.path.join(venv_dir, "lib", "python*", "site-packages"))
+    if not site_packages:
         return False
-    if sys.platform == "win32":
-        site_packages_dirs = [os.path.join(venv_dir, "Lib", "site-packages")]
-    else:
-        site_packages_dirs = glob.glob(os.path.join(venv_dir, "lib", "python3.*", "site-packages"))
-    return any(os.path.isdir(os.path.join(sp, module_name)) for sp in site_packages_dirs)
+    return os.path.exists(os.path.join(site_packages[0], module_name))
 
 
 def _is_pdf_parser_installed(engine: str) -> bool:
-    if venv_manager.is_packaged_desktop():
-        return venv_manager.is_parser_installed(engine)
-    if engine == "pdfplumber":
-        return _is_package_installed("pdfplumber")
-    if engine == "opendataloader":
-        return _is_package_installed("opendataloader_pdf")
-    venv_dir = (
-        venv_manager.MINERU_VENV if engine == "mineru"
-        else venv_manager.DEFAULT_VENV
-    )
-    return _is_package_installed_in_venv(venv_dir, engine)
+    if engine in {"mineru", "pymupdf"}:
+        return True
+    return False
 
 
 @router.get("/settings/pdf-parsers")
 async def get_pdf_parsers_info(current_user: str = Depends(get_current_user)):
-    current_engine = get_pdf_parser_engine()
-    parsers = [
-        {
-            "id": "opendataloader",
-            "name": "OpenDataLoader PDF (권장)",
-            "description": "고정밀 다단 레이아웃·표·수식 분석 오픈소스 파서 (#1 벤치마크, CPU 전용)",
-            "pros": "벤치마크 1위 정확도(0.907), 수식 LaTeX 변환, 다단 및 표 추출 우수, GPU 불필요 (초고속)",
-            "cons": "Java 11+ 런타임 필요",
-            "size_info": "약 25 MB",
-            "installed": _is_pdf_parser_installed("opendataloader"),
-            "install_package": "opendataloader-pdf"
-        },
-        {
-            "id": "pymupdf",
-            "name": "PyMuPDF (fitz)",
-            "description": "기본 파서 - 초고속, 경량 (텍스트 중심 논문 추천)",
-            "pros": "초고속 (몇 ms), 별도 설치 필요 없음",
-            "cons": "2단 복잡 구조, 수식 텍스트 엉킴 발생 가능",
-            "size_info": "기본 설치됨 (0 MB)",
-            "installed": True,
-            "install_package": None
-        },
-        {
-            "id": "pdfplumber",
-            "name": "pdfplumber",
-            "description": "표(Table) 정밀 분석 및 위치 레이아웃 보존 파서",
-            "pros": "표 구조 및 그래픽 좌표 추적 우수",
-            "cons": "PyMuPDF보다 약간 느림",
-            "size_info": "약 15 MB",
-            "installed": _is_pdf_parser_installed("pdfplumber"),
-            "install_package": "pdfplumber"
-        },
-        {
-            "id": "marker",
-            "name": "Marker (AI Markdown)",
-            "description": "AI 딥러닝 논문 파서 (LaTeX 수식, 표, 2단 레이아웃 지원)",
-            "pros": "수식을 LaTeX 변환, 정교한 오버레이 크롭",
-            "cons": "PyTorch/Vision 포함 (대용량), 처리 속도 느림",
-            "size_info": "약 2.5 GB (PyTorch & Vision 모델 포함)",
-            "installed": _is_pdf_parser_installed("marker"),
-            "install_package": "marker-pdf"
-        },
-        {
-            "id": "mineru",
-            "name": "MinerU",
-            "description": "대규모 학술 서적 및 논문 레이아웃 분석 AI 파서",
-            "pros": "정밀한 레이아웃/표/수식 세그멘테이션",
-            "cons": "대용량 패키지, 높은 CPU/GPU 및 메모리 소모. marker와 의존성이 충돌해 격리된 환경에 별도 설치되며, 이 엔진으로 전환/이탈 시 서버 또는 데스크탑 앱이 재시작됩니다.",
-            "size_info": "약 3.0 GB (전용 가상환경, Layout/Formula/OCR 모델 포함)",
-            "installed": _is_pdf_parser_installed("mineru"),
-            "install_package": "mineru[pipeline]"
-        }
-    ]
     return {
-        "current_engine": current_engine,
-        "parsers": parsers
+        "current_engine": "mineru",
+        "parsers": [
+            {
+                "id": "mineru",
+                "name": "MinerU",
+                "description": "HJPaper 전담 AI 논문 파서",
+                "pros": "수식, 표, 다단 레이아웃 전문 추출",
+                "cons": "",
+                "size_info": "기본 탑재",
+                "installed": True,
+                "install_package": None
+            }
+        ]
     }
 
 

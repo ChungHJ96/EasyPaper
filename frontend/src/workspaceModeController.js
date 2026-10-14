@@ -10,6 +10,7 @@ import {
   isWorkspaceModeAvailable,
   storeWorkspaceMode,
 } from './documentModes.js'
+import { setModeSetting } from './modeSettings.js'
 import { t } from './i18n.js'
 
 
@@ -145,6 +146,22 @@ export function createWorkspaceModeController({
     if (settingsResult.status === 'fulfilled') {
       const settings = settingsResult.value
       if (settings.preferred_workspace_mode) mode = storeWorkspaceMode(settings.preferred_workspace_mode)
+      if (settings.theme) {
+        setModeSetting('theme', 'research', settings.theme)
+        setModeSetting('theme', 'general', settings.theme)
+        try {
+          localStorage.setItem('theme', settings.theme)
+          localStorage.setItem('hjpaper_theme', settings.theme)
+        } catch {}
+      }
+      if (settings.accent_color) {
+        setModeSetting('accentColor', 'research', settings.accent_color)
+        setModeSetting('accentColor', 'general', settings.accent_color)
+        try {
+          localStorage.setItem('easypaper_accent_color', settings.accent_color)
+          localStorage.setItem('hjpaper_accent_color', settings.accent_color)
+        } catch {}
+      }
       if (Number.isInteger(settings.onboarding_version)) {
         localStorage.setItem(ONBOARDING_VERSION_KEY, String(settings.onboarding_version))
         if (settings.onboarding_version >= 1 && settings.preferred_workspace_mode) {

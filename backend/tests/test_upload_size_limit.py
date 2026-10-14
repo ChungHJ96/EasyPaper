@@ -160,11 +160,10 @@ def test_manual_upload_skips_ai_classification(test_client, isolated_dirs, monke
 def test_auto_translation_skips_full_job_at_fifty_pages(test_client, isolated_dirs, monkeypatch):
     upload_dir = isolated_dirs["upload_dir"]
     monkeypatch.setattr(upload_module, "UPLOAD_DIR", str(upload_dir))
-    monkeypatch.setattr(upload_module, "MAX_FILE_SIZE_MB", 50)
-    monkeypatch.setattr(
-        upload_module, "extract_pages",
-        lambda _path: [{"page_num": page, "text": ""} for page in range(1, 51)],
-    )
+    import services.pdf_parser as pdf_parser
+    pages_50 = [{"page_num": page, "text": ""} for page in range(1, 51)]
+    monkeypatch.setattr(upload_module, "extract_pages", lambda _path, *args, **kwargs: pages_50)
+    monkeypatch.setattr(pdf_parser, "extract_pages", lambda _path, *args, **kwargs: pages_50)
 
     starts = []
 

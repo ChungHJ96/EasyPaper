@@ -10,6 +10,7 @@
 // 읽기 시간이 없습니다"로 정직하게 표시한다.
 
 import { fetchLibraryTimeline, fetchLibraryDashboard, fetchLibrary, fetchReadingTimeStats, fetchReadingAnalyticsSummary } from '../library.js'
+import { formatDocumentDisplayTitle } from '../documentTitle.js'
 import { icon } from '../icons.js'
 import { countUniqueVerifiedPages, readPageCount, lastActivityIso, lastActivityDateKey, isoToLocalDateKey } from '../readPages.js'
 import { t, formatDate, formatNumber } from '../i18n.js'
@@ -420,7 +421,7 @@ export async function renderReadingHistoryPage(documentMode = 'research') {
     const d = docsById.get(docId)
     // 우선순위: 1) 현재 documents 테이블 제목  2) reading_time 스냅샷 제목
     //           3) 타임라인 이벤트 제목        4) fallback  5) '제목 없음'
-    return (d?.metadata?.title) || d?.filename
+    return (d ? formatDocumentDisplayTitle(d) : null)
       || titleByDoc.get(docId)
       || timelineDocTitles.get(docId)
       || fallback

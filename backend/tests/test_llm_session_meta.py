@@ -114,8 +114,11 @@ def test_antigravity_different_sessions_remain_parallel():
 
 
 def test_claude_waiter_rechecks_provider_after_session_lock(session_library, monkeypatch):
-    first_read_started = asyncio.Event()
-    release_first = asyncio.Event()
+    import shutil
+    monkeypatch.setattr(shutil, "copy2", lambda *args, **kwargs: None)
+
+    first_read_started = None
+    release_first = None
     prompts = []
 
     class FakeStdin:
@@ -156,6 +159,10 @@ def test_claude_waiter_rechecks_provider_after_session_lock(session_library, mon
     llm_client.save_provider_session_meta("paper-1", "antigravity", "agy-id")
 
     async def scenario():
+        nonlocal first_read_started, release_first
+        first_read_started = asyncio.Event()
+        release_first = asyncio.Event()
+
         async def consume(prompt):
             return [
                 token
@@ -167,12 +174,12 @@ def test_claude_waiter_rechecks_provider_after_session_lock(session_library, mon
             ]
 
         first = asyncio.create_task(consume("first"))
-        await first_read_started.wait()
+        await asyncio.wait_for(first_read_started.wait(), timeout=5.0)
         second = asyncio.create_task(consume("second"))
         await asyncio.sleep(0)
         release_first.set()
-        assert await first == ["result"]
-        assert await second == ["result"]
+        assert await asyncio.wait_for(first, timeout=5.0) == ["result"]
+        assert await asyncio.wait_for(second, timeout=5.0) == ["result"]
 
     asyncio.run(scenario())
 

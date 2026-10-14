@@ -4,7 +4,10 @@ import re
 
 _URL = re.compile(r"https?://[^\s<>()\]]+")
 _INLINE_CODE = re.compile(r"`([^`\n]+)`")
-_NUMBER_UNIT = re.compile(r"(?<![\w.])(?:[-+]?\d+(?:[.,]\d+)*\s?(?:%|ms|s|MB|GB|KB|Hz|kHz|MHz|GHz|°C|V|A|mA|kg|km|cm|mm)|[-+]?\d+(?:[.,]\d+)*(?![%\w.]))")
+_MULTI_UNITS = r"%|ms|MB|GB|KB|Hz|kHz|MHz|GHz|°C|mA|kg|km|cm|mm"
+_NUMBER_UNIT = re.compile(
+    rf"(?<![\w.])(?:[-+]?\d+(?:[.,]\d+)*\s?(?:{_MULTI_UNITS})(?!\w)|(?!\d{{4}}s\b)[-+]?\d+(?:[.,]\d+)*s(?!\w)|[-+]?\d+(?:[.,]\d+)*\s?V(?!\w)|[-+]?\d+(?:[.,]\d+)*(?:A|\s+A(?!\s+[A-Za-z]))(?!\w)|[-+]?\d+(?:[.,]\d+)*(?![%\w]|\.\d))"
+)
 _COMMAND = re.compile(r"(?m)^(?:\$\s*)?((?:sudo|curl|wget|npm|npx|pnpm|yarn|pip|python|docker|kubectl|git)\s+[^\n]+)$")
 _PATH = re.compile(r"(?<![:/\w])(?:/(?:[\w-]+/)*[\w-]+(?:\.[\w-]+)*|[A-Za-z]:\\(?:[^\s\\]+\\)*[^\s\\]+)")
 

@@ -184,7 +184,7 @@ test("인용 오버레이를 키보드로 열고 Escape로 트리거에 복귀�
   const tooltip = page.locator(".citation-tooltip")
   await expect(tooltip).toBeVisible()
   await expect(trigger).toHaveAttribute("aria-expanded", "true")
-  await expect(tooltip.locator(".citation-tooltip-resolve-btn")).toBeFocused()
+  await expect(tooltip.locator(".citation-tooltip-scholar-btn")).toBeFocused()
 
   await page.keyboard.press("Escape")
   await expect(tooltip).toBeHidden()

@@ -1,4 +1,7 @@
+import os
 import sys
+
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 # PyInstaller sidecar는 일반 Python 인터프리터가 아니어서 ``-m pip``를
 # 실행할 수 없다. 설치용으로 자신을 다시 띄운 경우 서버 import 전에 분기한다.
@@ -42,12 +45,14 @@ from services.auth import get_current_user
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """Initialize persistent state and restore library sessions at startup."""
+    import asyncio
     from services.db import init_db
     from services.usage_tracker import init_usage_table
 
     init_db()
     init_usage_table()
-    upload.restore_sessions_from_library()
+    if not os.getenv("TESTING") and "pytest" not in sys.modules:
+        asyncio.create_task(upload.async_restore_sessions_from_library())
     yield
 
 
@@ -56,6 +61,7 @@ app = FastAPI(
     description="PDF 논문 번역 서비스 (Gemma 4 E4B + Ollama)",
     version="1.0.0",
     lifespan=lifespan,
+
 )
 
 @app.exception_handler(HTTPException)
@@ -158,7 +164,7 @@ if os.path.exists(FRONTEND_DIST):
 else:
     @app.get("/")
     async def root():
-        return {"message": "EasyPaper API is running — 프론트엔드 빌드 필요 (npm run build)", "docs": "/docs"}
+        return {"message": "HJPaper API is running — 프론트엔드 빌드 필요 (npm run build)", "docs": "/docs"}
 
 
 if __name__ == "__main__":

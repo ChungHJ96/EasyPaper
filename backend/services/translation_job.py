@@ -428,7 +428,7 @@ async def _run_job(session_id: str, pages: list, job: dict) -> None:
                                     matched_curr["trans"] = clean_synced
                                     cleaned_translation = cleaned_translation.replace(old_tail_trans, clean_synced, 1)
 
-                if document_mode == "general":
+                if document_mode == "general" and document_type == "technical":
                     from services.translation_quality import assert_translation_integrity
                     assert_translation_integrity(text, cleaned_translation)
                 payload_data = {
@@ -568,7 +568,7 @@ def _build_full_md(session_id: str, pages: list, suffix: str = "") -> None:
     doc = get_document(session_id)
     title = doc.get("filename", session_id) if doc else session_id
 
-    parts = [f"# {title}\n\n> EasyPaper 번역본 · {datetime.now(timezone.utc).strftime('%Y-%m-%d')}\n"]
+    parts = [f"# {title}\n\n> HJPaper 번역본 · {datetime.now(timezone.utc).strftime('%Y-%m-%d')}\n"]
 
     for page_data in sorted(pages, key=lambda p: p["page_num"]):
         page_num = page_data["page_num"]

@@ -1,10 +1,13 @@
 import base64
 import fitz  # PyMuPDF
+import logging
 import os
 import re
-import threading
+import unicodedata
 from functools import lru_cache
 from typing import List, Dict, Any, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 def extract_pages(pdf_path: str, engine: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -17,17 +20,16 @@ def extract_pages(pdf_path: str, engine: Optional[str] = None) -> List[Dict[str,
             from config import get_pdf_parser_engine
             engine = get_pdf_parser_engine()
         except Exception:
-            engine = "pymupdf"
+            engine = "mineru"
 
-    engine = (engine or "pymupdf").lower().strip()
+    engine = (engine or "mineru").lower().strip()
 
-    if engine == "opendataloader":
-        pages = _extract_pages_opendataloader(pdf_path)
-    elif engine == "pdfplumber":
-        pages = _extract_pages_pdfplumber(pdf_path)
-    elif engine == "marker":
-        pages = _extract_pages_marker(pdf_path)
-    elif engine == "mineru":
+    if engine == "mineru" and not (os.getenv("HJPAPER_ISOLATED_WORKER") or os.getenv("EASYPAPER_ISOLATED_WORKER")):
+        import logging
+        logging.info(f"파서 엔진 {engine}은 격리된 워커 환경에서만 직접 추출하므로, 메인 프로세스 내부 동기 호출 시 PyMuPDF로 안전하게 폴백합니다.")
+        engine = "pymupdf"
+
+    if engine == "mineru":
         pages = _extract_pages_mineru(pdf_path)
     else:
         pages = _extract_pages_pymupdf(pdf_path)
@@ -112,6 +114,31 @@ def _extract_pages_marker(pdf_path: str) -> List[Dict[str, Any]]:
         return _extract_pages_pymupdf(pdf_path)
 
 
+class _TextToken:
+    __slots__ = ("word", "start", "end")
+
+    def __init__(self, word: str, start: int, end: int):
+        self.word = word
+        self.start = start
+        self.end = end
+
+
+_CROSS_PAGE_TOKEN_RE = re.compile(
+    r'[a-zA-Z0-9\u3131-\uD79D\u4e00-\u9fff]+(?:-\s*\n\s*[a-zA-Z0-9\u3131-\uD79D\u4e00-\u9fff]+)*'
+)
+
+
+def normalize_with_offsets(text: str) -> List[_TextToken]:
+    """텍스트에서 정규화 단어와 해당 단어의 원문 시작/끝 오프셋을 추출합니다.
+    하이픈 줄바꿈(예: experi-\n mental)도 하나의 단어로 결합하면서 원문 오프셋을 유지합니다."""
+    tokens = []
+    for m in _CROSS_PAGE_TOKEN_RE.finditer(text):
+        raw = m.group(0)
+        norm = re.sub(r'-\s*\n\s*', '', raw).lower()
+        tokens.append(_TextToken(norm, m.start(), m.end()))
+    return tokens
+
+
 def _find_cross_page_split(item_text: str, current_fitz_text: str, next_fitz_text: str) -> Optional[Tuple[str, str]]:
     """MinerU가 다음 페이지로 이어진 문단을 현재 페이지 블록에 조기 병합해버린 경우,
     실제 PDF 텍스트 레이어(PyMuPDF)와 대조하여 분할 지점(part_curr, part_next)을 찾습니다."""
@@ -123,7 +150,8 @@ def _find_cross_page_split(item_text: str, current_fitz_text: str, next_fitz_tex
         t = re.sub(r'[^a-zA-Z0-9\u3131-\uD79D\u4e00-\u9fff]+', ' ', t)
         return t.strip().lower().split()
 
-    item_words = _norm_words(item_text)
+    tokens = normalize_with_offsets(item_text)
+    item_words = [t.word for t in tokens]
     if len(item_words) < 10:
         return None
 
@@ -147,21 +175,26 @@ def _find_cross_page_split(item_text: str, current_fitz_text: str, next_fitz_tex
     if found_split_word_idx == -1:
         return None
 
-    target_words = item_words[found_split_word_idx:found_split_word_idx + 3]
-    pat = r'\s+'.join(re.escape(w) for w in target_words)
-    m = re.search(pat, item_text, re.IGNORECASE)
-    if not m:
-        m = re.search(r'\b' + re.escape(target_words[0]) + r'\b', item_text, re.IGNORECASE)
-
-    if m:
-        pos = m.start()
-        part1 = item_text[:pos].strip()
-        part2 = item_text[pos:].strip()
-        if part1 and part2:
-            return part1, part2
+    split_pos = tokens[found_split_word_idx].start
+    part_curr = item_text[:split_pos].strip()
+    part_next = item_text[split_pos:].strip()
+    if part_curr and part_next:
+        return part_curr, part_next
 
     return None
 
+
+_KNOWN_PUBLISHERS_PATTERN = (
+    r'Wiley|Willy|Elsevier|Springer(?:Link)?|ScienceDirect|Nature|IEEE(?:Xplore)?|ACM|'
+    r'JSTOR|Oxford(?:\s+University\s+Press)?|Cambridge(?:\s+University\s+Press)?|'
+    r'Taylor\s*(?:&|and)\s*Francis|Sage|Frontiers|MDPI|PNAS|PLoS|PLOS|BioMed(?:\s+Central)?|'
+    r'BioOne|BMJ|RSC|ACS|Emerald|De\s*Gruyter|Karger|Brill|Cell\s+Press|Annual\s+Reviews|'
+    r'Wolters\s+Kluwer|Lippincott|Ovid|IOP\s+Publishing|AIP\s+Publishing'
+)
+
+_DOWNLOAD_FROM_PATTERN = (
+    r'Downloaded\s+from\s+(?:https?://|www\.|[a-z0-9\-]+(?:\.[a-z0-9\-]+)*\.(?:com|org|net|edu|gov|io|ac\.uk)\b|(?:the\s+)?(?:' + _KNOWN_PUBLISHERS_PATTERN + r')\b)'
+)
 
 _METADATA_PATTERNS = [
     # 저널명, 권/호, 페이지 슬러그 (예: Functional Ecology 2005 19, 129–135, Vol. 19, pp. 129-135)
@@ -172,12 +205,58 @@ _METADATA_PATTERNS = [
     # 저작권 및 출판사 표기
     re.compile(r'(?:©|Copyright|All\s+rights\s+reserved|British\s+Ecological\s+Society|Blackwell|Elsevier|Springer|Wiley|IEEE|ACM|Frontiers)', re.IGNORECASE),
     # 논문 심사 및 투고 일정
-    re.compile(r'\b(?:Received|Accepted|Revised|Published\s+online|Available\s+online)\b.*?\b(?:19|20)\d{2}\b', re.IGNORECASE),
+    re.compile(r'\b(?:Received|Accepted|Revised|Published(?:\s+online)?|Available\s+online)\b.*?\b(?:19|20)\d{2}\b', re.IGNORECASE),
     # 교신저자 정보 / 이메일
     re.compile(r'\b(?:Author\s+to\s+whom\s+correspondence|Correspondence:?|Corresponding\s+author|E-?mail\s*:)\b', re.IGNORECASE),
     # DOI / URL / 업데이트 체크 / 웹사이트
     re.compile(r'\b(?:Check\s+for\s+updates|Open\s+Access|doi\.org/10\.\d{4,9}/|doi:\s*10\.|www\.[a-z0-9\-]+\.[a-z]{2,})\b', re.IGNORECASE),
+    # 다운로드 정보 및 출판사 플랫폼 이용약관 / 라이선스 표기 (예: Wiley, ScienceDirect, Springer)
+    re.compile(r'\b(?:' + _DOWNLOAD_FROM_PATTERN + r'|Terms\s+and\s+Conditions|rules\s+of\s+use|Creative\s+Commons(?:\s+License)?|Wiley\s+Online\s+Library|onlinelibrary\.wiley\.com|sciencedirect\.com|springerlink\.com|Downloaded\s+by|Downloaded\s+on|Access\s+provided\s+by)\b', re.IGNORECASE),
 ]
+
+_DOWNLOAD_METADATA_RE = re.compile(
+    r'\b(?:'
+    r'' + _DOWNLOAD_FROM_PATTERN + r''
+    r'|Downloaded\s+by\s+.*?\b(?:from|on|at)\b'
+    r'|Downloaded\s+on\s+(?:\d{1,4}[/-]\d{1,2}[/-]\d{1,4}|[A-Za-z]+\s+\d{1,2},?\s*\d{4}|\[\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\])'
+    r'|Access\s+provided\s+by\b'
+    r'|Terms\s+and\s+Conditions|rules\s+of\s+use|Creative\s+Commons(?:\s+License)?'
+    r'|Wiley\s+Online\s+Library|onlinelibrary\.wiley\.com|sciencedirect\.com|springerlink\.com|tandfonline\.com'
+    r'|nature\.com|ieeexplore\.ieee\.org'
+    r'|reproduction\s+in\s+any\s+medium|unrestricted\s+use,\s+distribution|creativecommons\.org/licenses'
+    r')\b',
+    re.IGNORECASE,
+)
+
+_METADATA_SECTION_RE = re.compile(
+    r'^(?:'
+    r'(?:Data\s+(?:and\s+code\s+)?availability(?:\s+statement)?|Availability\s+of\s+data(?:\s+and\s+materials)?|Data\s+deposition)\s*:'
+    r'|(?:Funding(?:\s+statement|\s+declaration|\s+information)?|Financial\s+support|Grant\s+support|Role\s+of\s+the\s+funding\s+source)\s*:'
+    r'|(?:Competing\s+interests?(?:\s+statement|\s+declaration)?|Conflict(?:s)?\s+of\s+interest(?:\s+statement|\s+declaration)?|Declaration\s+of\s+competing\s+interest(?:s)?)\s*:'
+    r'|(?:(?:Academic\s+|Handling\s+|Section\s+)?Editor|Communicated\s+by|Edited\s+by)\s*:'
+    r'|(?:Received|Accepted|Revised|Published(?:\s+online)?)\s*:\s*[A-Za-z0-9,\s\-]+'
+    r'|Peer\s+Review\s+History\s*:'
+    r'|Citation\s*:\s*[A-Za-z0-9]'
+    r'|(?:Author\s+contributions?|CRediT\s+authorship\s+contribution\s+statement)\s*:'
+    r'|(?:Disclaimer|Ethics\s+statement|Ethics\s+approval|Consent\s+for\s+publication|Publisher[\'’]s\s+[Nn]ote)\s*:'
+    r')',
+    re.IGNORECASE,
+)
+
+_METADATA_STANDALONE_RE = re.compile(
+    r'(?:'
+    r'The\s+authors?\s+(?:have\s+declared\s+that\s+no\s+competing\s+interests\s+exist|declare\s+(?:that\s+they\s+have\s+)?no\s+conflict(?:s)?\s+of\s+interest|declare\s+no\s+competing\s+interests?)'
+    r'|\b(?:and\s+)?reproduction\s+in\s+any\s+medium,\s*provided\b'
+    r'|\b(?:distributed\s+under\s+the\s+terms\s+of\s+the\s+Creative\s+Commons|Creative\s+Commons\s+Attribution\s+License)\b'
+    r'|\bunrestricted\s+use,\s+distribution,\s+and\s+reproduction\b'
+    r'|\bhttps?://creativecommons\.org/licenses/'
+    r'|^(?:OPEN\s+ACCESS|Open\s+Access)$'
+    r'|^Copyright:\s*(?:©\s*)?\d{4}'
+    r')',
+    re.IGNORECASE,
+)
+
+_EMAIL_PATTERN = re.compile(r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$')
 
 _CAPTION_HEADER_PREFIX_RE = re.compile(
     r'^(?:\d{1,4}\s+)?[A-Z]\.\s*(?:[A-Z]\.\s*)?[A-Za-z\-]+(?:\s+et\s+al\.?)?\s+(?=(?:Table|Fig(?:ure)?|Equation)\b)',
@@ -224,12 +303,27 @@ def is_metadata_text(text: str, page_idx: int = 0, paper_title: str = "") -> boo
     cleaned = text.strip()
     if not cleaned:
         return True
-    if len(cleaned) > 280:
+    # 다운로드 정보 및 라이선스 슬러그, 메타데이터 섹션(Funding, Data availability, Competing interests 등)은
+    # 긴 텍스트라도 항상 메타데이터로 판정 (단, 400자 초과 블록은 선두 일치 또는 핵심 출판사/약관 키워드 포함 시 판정)
+    if _DOWNLOAD_METADATA_RE.search(cleaned):
+        if len(cleaned) <= 400 or _DOWNLOAD_METADATA_RE.match(cleaned) or "terms and conditions" in cleaned.lower() or "onlinelibrary.wiley.com" in cleaned.lower() or "sciencedirect.com" in cleaned.lower():
+            return True
+    if _METADATA_SECTION_RE.search(cleaned):
+        return True
+    if _METADATA_STANDALONE_RE.search(cleaned):
+        return True
+    email_cand = re.sub(r'^[^\w@]+|[^\w@]+$', '', cleaned)
+    if email_cand and _EMAIL_PATTERN.fullmatch(email_cand):
+        return True
+    if len(cleaned) > 400:
         return False
     if cleaned.startswith("<sub>") and cleaned.endswith("</sub>"):
         return True
     if re.fullmatch(r'\d{1,5}', cleaned):
         return True
+    # 참고문헌 항목(대괄호/번호 매겨진 항목 또는 저자-연도 시작)은 본문/참고문헌이며 메타데이터가 아님
+    if _PDF_REFERENCE_ENTRY_START_RE.match(cleaned):
+        return False
     for pat in _METADATA_PATTERNS:
         if pat.search(cleaned):
             return True
@@ -320,7 +414,8 @@ def filter_repeated_headers_footers(pages: List[Dict[str, Any]], paper_title: st
             new_blocks.append(b)
 
         p_copy = dict(p)
-        p_copy["blocks"] = new_blocks
+        if "blocks" in p:
+            p_copy["blocks"] = new_blocks
 
         # 캡션(type==1)을 제외한 본문 블록만 텍스트로 재구성
         body_blocks = [b for b in new_blocks if b.get("type") == 0]
@@ -333,8 +428,10 @@ def filter_repeated_headers_footers(pages: List[Dict[str, Any]], paper_title: st
             p_text = f"{body_str}\n\n{caption_str}"
         elif body_str:
             p_text = body_str
-        else:
+        elif caption_str:
             p_text = caption_str
+        else:
+            p_text = p.get("text", "")
 
         p_copy["text"] = clean_text_for_translation(p_text)
         filtered_pages.append(p_copy)
@@ -354,14 +451,6 @@ def sanitize_mineru_pages(pages: List[Dict[str, Any]], pdf_path: str) -> List[Di
     except Exception:
         return pages
 
-    detected_title = ""
-    if pages:
-        for b in pages[0].get("blocks", []):
-            t_cand = b.get("text", "").strip()
-            if t_cand and len(t_cand) > 10 and not is_metadata_text(t_cand, 0, ""):
-                detected_title = re.sub(r'\s+', ' ', t_cand).strip()
-                break
-
     for p_idx in range(len(pages)):
         curr_p = pages[p_idx]
         has_next = p_idx + 1 < len(pages) and p_idx + 1 < len(fitz_texts)
@@ -372,9 +461,16 @@ def sanitize_mineru_pages(pages: List[Dict[str, Any]], pdf_path: str) -> List[Di
             b_type = block.get("type", 0)
             bbox = block.get("bbox", [0.0, 0.0, 1000.0, 1000.0])
 
-            # 헤더/푸터 및 저널 메타데이터 블록 정제 (내용 기반 필터링)
-            if b_type == 0 and is_metadata_text(txt, p_idx, detected_title):
+            # 헤더/푸터 및 저널 메타데이터, 다운로드 슬러그 블록 정제
+            if _DOWNLOAD_METADATA_RE.search(txt) or is_metadata_text(txt, p_idx):
                 continue
+            if is_margin_block(bbox, 1000.0, 1000.0) and (_DOWNLOAD_METADATA_RE.search(txt) or is_metadata_text(txt, p_idx)):
+                continue
+            if b_type == 0 and len(txt) < 120 and (bbox[1] < 75.0 or bbox[3] > 905.0):
+                if re.search(r'\b(?:Volume\s*\d+|Article\s*[a-z]?\d+|doi:|http[s]?://|www\.|Check\s+for\s+updates|esa|ECOSPHERE)\b', txt, re.IGNORECASE):
+                    continue
+                if txt.startswith("<sub>") and txt.endswith("</sub>"):
+                    continue
 
             if b_type == 1:
                 clean_cap = _CAPTION_HEADER_PREFIX_RE.sub('', txt).strip()
@@ -399,14 +495,38 @@ def sanitize_mineru_pages(pages: List[Dict[str, Any]], pdf_path: str) -> List[Di
             new_curr_blocks.append(block)
 
         curr_p["blocks"] = new_curr_blocks
-        curr_p["text"] = clean_text_for_translation("\n\n".join(b["text"] for b in new_curr_blocks).strip())
+        body_blocks = [b for b in new_curr_blocks if b.get("type") == 0]
+        caption_blocks = [b for b in new_curr_blocks if b.get("type") == 1]
+        body_str = "\n\n".join(b.get("text", "") for b in body_blocks).strip()
+        caption_str = "\n\n".join(b.get("text", "") for b in caption_blocks).strip()
+        if body_str and caption_str:
+            p_text = f"{body_str}\n\n{caption_str}"
+        elif body_str:
+            p_text = body_str
+        elif caption_str:
+            p_text = caption_str
+        else:
+            p_text = curr_p.get("text", "")
+        curr_p["text"] = clean_text_for_translation(p_text)
+
         if spillover_blocks and has_next:
             next_p = pages[p_idx + 1]
-            next_p["blocks"] = spillover_blocks + next_p.get("blocks", [])
-            next_p["text"] = clean_text_for_translation("\n\n".join(b["text"] for b in next_p["blocks"]).strip())
+            all_next_blocks = spillover_blocks + next_p.get("blocks", [])
+            next_p["blocks"] = all_next_blocks
+            next_body = [b for b in all_next_blocks if b.get("type") == 0]
+            next_caps = [b for b in all_next_blocks if b.get("type") == 1]
+            next_body_str = "\n\n".join(b.get("text", "") for b in next_body).strip()
+            next_cap_str = "\n\n".join(b.get("text", "") for b in next_caps).strip()
+            if next_body_str and next_cap_str:
+                np_text = f"{next_body_str}\n\n{next_cap_str}"
+            elif next_body_str:
+                np_text = next_body_str
+            elif next_cap_str:
+                np_text = next_cap_str
+            else:
+                np_text = next_p.get("text", "")
+            next_p["text"] = clean_text_for_translation(np_text)
 
-    if pages:
-        pages = filter_repeated_headers_footers(pages, paper_title=detected_title)
     return pages
 
 
@@ -487,19 +607,22 @@ def _build_mineru_pages(content_list: Any, total_pages: int = 0, pdf_path: Optio
             if not txt:
                 continue
 
-            t = item.get("type")
-            if t in ("header", "footer", "page_footnote", "page_number"):
-                # 머리말, 꼬리말, 쪽번호, 각주는 번역 스트림에서 완전 제외
-                continue
-
-            if is_metadata_text(txt, page_idx, detected_title):
-                continue
-
             raw_bbox = item.get("bbox")
             if raw_bbox and len(raw_bbox) == 4:
                 bbox = [float(c) for c in raw_bbox]
             else:
                 bbox = [0.0, 0.0, 1000.0, 1000.0]
+
+            t = item.get("type")
+            if t in ("header", "footer", "page_footnote", "page_number", "aside_text"):
+                # 머리말, 꼬리말, 쪽번호, 각주, 측면 마진 슬러그(aside_text)는 번역 스트림에서 완전 제외
+                continue
+
+            if is_margin_block(bbox, 1000.0, 1000.0) and (_DOWNLOAD_METADATA_RE.search(txt) or is_metadata_text(txt, page_idx, detected_title)):
+                continue
+
+            if is_metadata_text(txt, page_idx, detected_title):
+                continue
 
             if t in ("table", "image", "chart"):
                 clean_cap = _CAPTION_HEADER_PREFIX_RE.sub('', txt).strip()
@@ -535,146 +658,6 @@ def _build_mineru_pages(content_list: Any, total_pages: int = 0, pdf_path: Optio
             "text": text_content,
             "blocks": all_blocks,
             "parser_engine": "mineru",
-        })
-
-    if pages:
-        pages = filter_repeated_headers_footers(pages, paper_title=detected_title)
-    return pages
-
-
-def _extract_pages_opendataloader(pdf_path: str) -> List[Dict[str, Any]]:
-    try:
-        data = _run_opendataloader(pdf_path)
-        kids = data.get("kids", [])
-        total_pages = data.get("number of pages", 0)
-        if total_pages <= 0:
-            try:
-                with fitz.open(pdf_path) as d:
-                    total_pages = len(d)
-            except Exception:
-                pass
-
-        pages = _build_opendataloader_pages(kids, total_pages, pdf_path=pdf_path)
-        if not pages:
-            return _extract_pages_pymupdf(pdf_path)
-        return pages
-    except Exception as e:
-        import logging
-        logging.warning(f"OpenDataLoader 파서 실행 실패 ({e}). PyMuPDF 파서로 폴백합니다.")
-        return _extract_pages_pymupdf(pdf_path)
-
-
-def _build_opendataloader_pages(kids: List[Dict[str, Any]], total_pages: int = 0, pdf_path: Optional[str] = None) -> List[Dict[str, Any]]:
-    """OpenDataLoader kids 목록을 페이지별 텍스트 및 바운딩 박스 블록으로 조립합니다.
-    OpenDataLoader는 [left, bottom, right, top] PDF 포인트 좌표(72pt=1인치)를 제공합니다.
-    본문 문맥이 캡션/표에 끊기지 않도록 본문 텍스트를 먼저 연결하고 캡션은 type=1로 분리합니다."""
-    if not kids:
-        return []
-
-    page_dims: Dict[int, Tuple[float, float]] = {}
-    if pdf_path and os.path.exists(pdf_path):
-        try:
-            with fitz.open(pdf_path) as d:
-                if total_pages <= 0:
-                    total_pages = len(d)
-                for p_idx in range(len(d)):
-                    p = d[p_idx]
-                    page_dims[p_idx + 1] = (float(p.rect.width), float(p.rect.height))
-        except Exception:
-            pass
-
-    pages_items: Dict[int, List[Dict[str, Any]]] = {}
-    for item in kids:
-        if not isinstance(item, dict):
-            continue
-        p_num = item.get("page number", 1)
-        pages_items.setdefault(p_num, []).append(item)
-
-    max_p_num = max(pages_items.keys()) if pages_items else 1
-    num_pages = max(total_pages, max_p_num)
-
-    detected_title = ""
-    for item in pages_items.get(1, []):
-        t = item.get("type")
-        c = (item.get("content") or "").strip()
-        if t in ("heading", "paragraph") and c and len(c) > 10 and not is_metadata_text(c, 0, ""):
-            detected_title = re.sub(r'\s+', ' ', c).strip()
-            break
-
-    pages: List[Dict[str, Any]] = []
-
-    for p_num in range(1, num_pages + 1):
-        pw, ph = page_dims.get(p_num, (595.0, 842.0))
-        items = pages_items.get(p_num, [])
-        body_blocks: List[Dict[str, Any]] = []
-        caption_blocks: List[Dict[str, Any]] = []
-
-        for item in items:
-            t = item.get("type", "")
-            if t in ("header", "footer", "page_number", "page_footnote"):
-                continue
-
-            raw_txt = (item.get("content") or "").strip()
-            if not raw_txt and t in ("picture", "image"):
-                raw_txt = (item.get("description") or "").strip()
-            txt = clean_text_for_translation(raw_txt)
-            if not txt:
-                continue
-
-            if is_metadata_text(txt, p_num - 1, detected_title):
-                continue
-
-            raw_bbox = item.get("bounding box")
-            if raw_bbox and len(raw_bbox) == 4:
-                left, bottom, right, top = float(raw_bbox[0]), float(raw_bbox[1]), float(raw_bbox[2]), float(raw_bbox[3])
-                x0 = max(0.0, min(left, pw))
-                x1 = max(0.0, min(right, pw))
-                y0 = max(0.0, min(ph - top, ph))
-                y1 = max(0.0, min(ph - bottom, ph))
-                if y0 > y1:
-                    y0, y1 = y1, y0
-                if x0 > x1:
-                    x0, x1 = x1, x0
-                bbox = [x0, y0, x1, y1]
-            else:
-                bbox = [0.0, 0.0, pw, ph]
-
-            if t in ("caption", "table", "picture", "image", "chart"):
-                clean_cap = _CAPTION_HEADER_PREFIX_RE.sub('', txt).strip()
-                caption_blocks.append({
-                    "bbox": bbox,
-                    "text": clean_cap or txt,
-                    "type": 1,
-                })
-            else:
-                body_blocks.append({
-                    "bbox": bbox,
-                    "text": txt,
-                    "type": 0,
-                })
-
-        body_str = "\n\n".join(b["text"] for b in body_blocks).strip()
-        caption_str = "\n\n".join(b["text"] for b in caption_blocks).strip()
-
-        if body_str and caption_str:
-            page_text = f"{body_str}\n\n{caption_str}"
-        elif body_str:
-            page_text = body_str
-        else:
-            page_text = caption_str
-
-        text_content = clean_text_for_translation(page_text)
-        all_blocks = body_blocks + caption_blocks
-        if not all_blocks and text_content:
-            all_blocks = [{"bbox": [0.0, 0.0, pw, ph], "text": text_content, "type": 0}]
-
-        pages.append({
-            "page_num": p_num,
-            "text": text_content,
-            "blocks": all_blocks,
-            "parser_engine": "opendataloader",
-            "width": pw,
-            "height": ph,
         })
 
     if pages:
@@ -728,7 +711,14 @@ def _extract_page(page: fitz.Page, page_num: int) -> Dict[str, Any]:
             continue
         x0, y0, x1, y1 = b["bbox"]
         if figure_rects and _rect_mostly_inside_any(x0, y0, x1, y1, figure_rects):
-            continue
+            clean_t = text.strip()
+            is_essential_text = (
+                bool(re.search(r'\b(abstract|summary|introduction)\b', clean_t, re.IGNORECASE))
+                or len(clean_t.split()) > 25
+                or len(clean_t) > 150
+            )
+            if not is_essential_text:
+                continue
         blocks.append((x0, y0, x1, y1, text, is_indented))
 
     # 2단 레이아웃 감지
@@ -768,6 +758,32 @@ _INDENT_THRESHOLD = 8.0
 # 실제 논문 본문과 충돌할 일이 없다). chunker.tag_source_text()가 이 표시를 읽고
 # 제거한 뒤 해당 문단 첫 문장의 [S{n}] 태그에 들여쓰기 정보를 실어 보낸다.
 _INDENT_SENTINEL = ""
+
+STANDALONE_DIACRITICS_MAP = {
+    '\xa8': '\u0308',  # diaeresis (¨)
+    '\xb4': '\u0301',  # acute (´)
+    '\u02c6': '\u0302', # circumflex (ˆ)
+    '\u02dc': '\u0303', # tilde (˜)
+    '\xaf': '\u0304',  # macron (¯)
+    '\u02d8': '\u0306', # breve (˘)
+    '\u02d9': '\u0307', # dot above (˙)
+    '\u02da': '\u030a', # ring above (˚)
+    '\xb0': '\u030a',  # degree/ring (°)
+    '\xb8': '\u0327',  # cedilla (¸)
+    '\u02db': '\u0328', # ogonek (˛)
+    '\u02c7': '\u030c', # caron (ˇ)
+}
+
+
+def clean_diacritics(text: str) -> str:
+    """PDF 폰트 추출 시 분리된 독립 발음구별기호(예: Ha\\xa8rko\\xa8nen)를
+    유니코드 결합 문자로 치환 후 NFC 정규화하여 올바른 완성형 문자(Härkönen)로 결합합니다."""
+    if not text:
+        return ""
+    for s, c in STANDALONE_DIACRITICS_MAP.items():
+        if s in text:
+            text = text.replace(s, c)
+    return unicodedata.normalize("NFC", text)
 
 
 def _is_bold_span(span: dict) -> bool:
@@ -962,7 +978,7 @@ def clean_text_for_translation(text: str) -> str:
     # ③ 3개 이상 연속 빈 줄 → 2개로 축소
     result = re.sub(r'\n{3,}', '\n\n', result)
 
-    return result.strip()
+    return clean_diacritics(result.strip())
 
 
 
@@ -1287,11 +1303,14 @@ def _find_vector_figure_rects(page: "fitz.Page", drawings: Optional[list] = None
             continue
         if w > page_width * 0.9 and h > page_height * 0.9:
             continue
-        # 테두리(stroke) 없이 흰색(또는 거의 흰색)만 채운 사각형은 배경/그룹핑용
-        # 투명 요소일 뿐 실제로 보이는 그림 내용이 아니므로 제외한다.
+        # 테두리(stroke) 없이 흰색 또는 밝은 회색/파스텔만 채운 사각형은 배경/그룹핑/콜아웃
+        # (예: 저널의 음영 처리된 Abstract 박스) 요소일 뿐 실제 차트/도형이 아니므로 제외한다.
         fill = d.get("fill")
         stroke = d.get("color")
-        if stroke is None and fill is not None and all(c is not None and c > 0.92 for c in fill):
+        if stroke is None and fill is not None and (
+            all(c is not None and c > 0.80 for c in fill)
+            or (len(fill) > 0 and sum(fill) / len(fill) > 0.80)
+        ):
             continue
         vector_rects.append([r.x0, r.y0, r.x1, r.y1])
 
@@ -1445,16 +1464,19 @@ _ROMAN_NUMERAL_RE = r"(?=[MDCLXVI])M{0,4}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:
 # "Table N"으로 시작하는 문장(번호 뒤에 소문자 동사가 곧장 이어짐)은 캡션이
 # 아니므로 걸러내야 한다. re.IGNORECASE가 걸린 상태에서도 이 판별만은
 # 대소문자를 구분해야 하므로 (?-i:...)로 지역 범위에서 대소문자 구분을 켠다.
-_CAPTION_FOLLOW_RE = r"(?=\s*(?:[:.\-–—*|]|$|(?-i:[A-Z0-9])))"
+_CAPTION_FOLLOW_RE = r"(?=\s*(?:[:.\-–—*|<>()]|$|(?-i:[A-Z0-9])|[가-힣]))"
+# 점으로 구분된 장/절 번호(예: 10.1, 10.2) 및 일반 숫자/로마 숫자. 점 뒤에 또 다른 숫자가
+# 이어질 때 앞부분만(예: 10) 매칭하고 백트래킹하는 것을 막기 위해 (?!\.\d)를 건다.
+_CAPTION_NUMBER_RE = rf"(?:[sS]?(?:\d+(?:\.\d+)*)(?!\.\d)|{_ROMAN_NUMERAL_RE})"
 _CAPTION_RE = re.compile(
-    rf"^\s*(Fig(?:ure)?|Table)\.?\s*(\d+|{_ROMAN_NUMERAL_RE})\b{_CAPTION_FOLLOW_RE}", re.IGNORECASE
+    rf"^\s*(Fig(?:ure)?|Table|그림|표)\.?\s*({_CAPTION_NUMBER_RE})\b{_CAPTION_FOLLOW_RE}", re.IGNORECASE
 )
-# 수식 번호: 줄 끝에 "(3)"처럼 소괄호 숫자(또는 로마 숫자)만 단독으로 오는 경우만
+# 수식 번호: 줄 끝에 "(3)" 또는 "(10.1)"처럼 소괄호 숫자(또는 로마 숫자)만 단독으로 오는 경우만
 # 인정한다. 인용 연도("...(2020)")와 헷갈리지 않도록 자릿수를 1~3자리로 제한한다
 # (수식 번호가 999개를 넘는 논문은 사실상 없음. 반면 연도는 항상 4자리라 자동으로
 # 배제됨). 로마 숫자는 대문자만 인정한다(re.IGNORECASE를 안 씀) - 본문에
 # 흔한 "(i)", "(ii)" 같은 소문자 열거 표기를 수식 번호로 오인하지 않기 위함이다.
-_EQUATION_LINE_RE = re.compile(rf"\((\d{{1,3}}|{_ROMAN_NUMERAL_RE})\)\s*$")
+_EQUATION_LINE_RE = re.compile(rf"\((\d{{1,3}}(?:\.\d{{1,3}})+|\d{{1,3}}|{_ROMAN_NUMERAL_RE})\)\s*$")
 
 
 # ── Marker 엔진 연동 ──────────────────────────────────────────────────────
@@ -1526,14 +1548,155 @@ def _marker_find_caption_text(block) -> Optional[str]:
     return None
 
 
+def _clean_caption_for_matching(text: str) -> str:
+    """별표 서식을 제거하고, 캡션 앞에 붙은 subfigure 레이블(예: '(b) FIGURE 4', 'a) Figure 2', '[A] Table 1')
+    등을 제거하여 본래의 Figure/Table 라벨 패턴 매칭이 가능하도록 정제한다."""
+    plain = re.sub(r"\*+", "", text or "").strip()
+    return re.sub(r"^(?:\([a-zA-Z0-9]+\)|\[[a-zA-Z0-9]+\]|[a-zA-Z0-9][.)])\s*", "", plain).strip()
+
+
 def _match_label_from_caption_text(caption_text: Optional[str]) -> "tuple[Optional[str], Optional[str]]":
     if not caption_text:
         return None, None
-    m = _CAPTION_RE.match(re.sub(r"\*+", "", caption_text))
+    cleaned = _clean_caption_for_matching(caption_text)
+    m = _CAPTION_RE.match(cleaned)
     if not m or not m.group(2):
         return None, None
-    kind = "Figure" if m.group(1).lower().startswith("fig") else "Table"
+    kind = "Figure" if (m.group(1).lower().startswith("fig") or m.group(1) == "그림") else "Table"
     return f"{kind} {m.group(2).upper()}", caption_text[:600]
+
+
+def _absorb_unlabeled_figure_panels(regions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """한 페이지 내의 Figure 영역들에 대해:
+    1. 동일 라벨(예: 두 패널 모두 'Figure 3'으로 인식된 경우)을 가진 중복 영역을 하나로 병합.
+    2. 캡션과 멀리 떨어져 있어 라벨이 부여되지 않은 인접 서브패널(예: multi-panel Figure의
+       상단 (a) 그래프)을 라벨이 부여된 Figure 영역으로 자동 흡수하여 온전한 전체 그림의
+       Bounding Box를 구성한다."""
+    if not regions:
+        return []
+
+    # 1. 동일 라벨을 가진 영역 사전 병합
+    merged_by_label: Dict[str, Dict[str, Any]] = {}
+    unlabeled: List[Dict[str, Any]] = []
+    for r in regions:
+        lbl = r.get("label")
+        if lbl:
+            if lbl in merged_by_label:
+                m = merged_by_label[lbl]
+                x0 = min(m["left"], r["left"])
+                y0 = min(m["top"], r["top"])
+                x1 = max(m["left"] + m["width"], r["left"] + r["width"])
+                y1 = max(m["top"] + m["height"], r["top"] + r["height"])
+                m["left"] = round(x0, 2)
+                m["top"] = round(y0, 2)
+                m["width"] = round(x1 - x0, 2)
+                m["height"] = round(y1 - y0, 2)
+                if not m.get("caption") and r.get("caption"):
+                    m["caption"] = r["caption"]
+            else:
+                merged_by_label[lbl] = dict(r)
+        else:
+            unlabeled.append(dict(r))
+
+    labeled = list(merged_by_label.values())
+
+    # 2. 미매칭 인접 서브패널 흡수 반복
+    changed = True
+    while changed and unlabeled:
+        changed = False
+        still_unlabeled = []
+        for u in unlabeled:
+            u_x0 = u["left"]
+            u_y0 = u["top"]
+            u_x1 = u["left"] + u["width"]
+            u_y1 = u["top"] + u["height"]
+            absorbed = False
+            for target in labeled:
+                if not (target.get("label") or "").startswith("Figure"):
+                    continue
+                t_x0 = target["left"]
+                t_y0 = target["top"]
+                t_x1 = target["left"] + target["width"]
+                t_y1 = target["top"] + target["height"]
+
+                # 세로 방향 인접 배치 검사 (위/아래 서브패널)
+                h_overlap = min(u_x1, t_x1) - max(u_x0, t_x0)
+                min_w = min(u["width"], target["width"])
+                h_ratio = h_overlap / min_w if min_w > 0 else 0
+                if u_y1 <= t_y0:
+                    v_gap = t_y0 - u_y1
+                elif t_y1 <= u_y0:
+                    v_gap = u_y0 - t_y1
+                else:
+                    v_gap = 0
+                vert_stacked = (h_ratio >= 0.4 and v_gap <= 8.0)
+
+                # 가로 방향 인접 배치 검사 (좌/우 서브패널)
+                v_overlap = min(u_y1, t_y1) - max(u_y0, t_y0)
+                min_h = min(u["height"], target["height"])
+                v_ratio = v_overlap / min_h if min_h > 0 else 0
+                if u_x1 <= t_x0:
+                    h_gap = t_x0 - u_x1
+                elif t_x1 <= u_x0:
+                    h_gap = u_x0 - t_x1
+                else:
+                    h_gap = 0
+                horiz_stacked = (v_ratio >= 0.4 and h_gap <= 8.0)
+
+                if vert_stacked or horiz_stacked:
+                    new_x0 = min(t_x0, u_x0)
+                    new_y0 = min(t_y0, u_y0)
+                    new_x1 = max(t_x1, u_x1)
+                    new_y1 = max(t_y1, u_y1)
+                    target["left"] = round(new_x0, 2)
+                    target["top"] = round(new_y0, 2)
+                    target["width"] = round(new_x1 - new_x0, 2)
+                    target["height"] = round(new_y1 - new_y0, 2)
+                    target["_has_absorbed_panels"] = True
+                    absorbed = True
+                    changed = True
+                    break
+            if not absorbed:
+                still_unlabeled.append(u)
+        unlabeled = still_unlabeled
+
+    # 다중 서브패널이 흡수된 복합 Figure는 AI 레이아웃 모델이 플롯 박스만 타이트하게
+    # 감지하는 경향이 있어, 플롯 바로 위에 뜬 (a) 기호나 좌측 마진 라벨이 잘리기 쉽다.
+    # 동일 페이지 내 다른 영역과 충돌하지 않는 한도 내에서 안전 여백을 자동 확장한다.
+    for item in labeled:
+        if not item.pop("_has_absorbed_panels", False):
+            continue
+        x0, y0 = item["left"], item["top"]
+        x1, y1 = round(x0 + item["width"], 2), round(y0 + item["height"], 2)
+
+        if item["width"] > 45.0:
+            expand_left = min(12.0, max(0.0, x0 - 6.5))
+            expand_top = min(3.0, max(0.0, y0 - 2.5))
+            expand_right = min(3.0, max(0.0, 95.0 - x1))
+        else:
+            expand_left = min(3.0, max(0.0, x0 - 3.0))
+            expand_top = min(2.0, max(0.0, y0 - 2.0))
+            expand_right = min(2.0, max(0.0, 95.0 - x1))
+
+        for other in labeled + unlabeled:
+            if other is item:
+                continue
+            ox0, oy0 = other["left"], other["top"]
+            ox1, oy1 = round(ox0 + other["width"], 2), round(oy0 + other["height"], 2)
+            if oy1 <= y0 and max(x0, ox0) < min(x1, ox1):
+                expand_top = min(expand_top, max(0.0, y0 - (oy1 + 0.5)))
+            if ox1 <= x0 and max(y0, oy0) < min(y1, oy1):
+                expand_left = min(expand_left, max(0.0, x0 - (ox1 + 0.5)))
+
+        new_x0 = round(x0 - expand_left, 2)
+        new_y0 = round(y0 - expand_top, 2)
+        new_x1 = round(x1 + expand_right, 2)
+        item["left"] = new_x0
+        item["top"] = new_y0
+        item["width"] = round(new_x1 - new_x0, 2)
+        item["height"] = round(y1 - new_y0, 2)
+
+    return labeled + unlabeled
 
 
 def _marker_page_regions(page_json) -> List[Dict[str, Any]]:
@@ -1582,253 +1745,44 @@ def _marker_page_regions(page_json) -> List[Dict[str, Any]]:
 
     for child in page_json.children or []:
         walk(child)
-    return regions
+    return _absorb_unlabeled_figure_panels(regions)
 
 
-_opendataloader_lock = threading.Lock()
-_opendataloader_cache: Dict[str, dict] = {}
-
-
-def _ensure_java_available() -> None:
-    """OpenDataLoader 실행에 필요한 Java 런타임이 PATH에 잡혀있는지 확인하고,
-    Homebrew/macOS OpenJDK 경로를 PATH 최우선 순위로 추가합니다."""
-    homebrew_openjdk = "/opt/homebrew/opt/openjdk/bin"
-    if os.path.exists(os.path.join(homebrew_openjdk, "java")):
-        current_paths = os.environ.get("PATH", "").split(":")
-        if not current_paths or current_paths[0] != homebrew_openjdk:
-            os.environ["PATH"] = f"{homebrew_openjdk}:{os.environ.get('PATH', '')}"
-        os.environ.setdefault("JAVA_HOME", "/opt/homebrew/opt/openjdk")
-        return
-
-    intel_openjdk = "/usr/local/opt/openjdk/bin"
-    if os.path.exists(os.path.join(intel_openjdk, "java")):
-        current_paths = os.environ.get("PATH", "").split(":")
-        if not current_paths or current_paths[0] != intel_openjdk:
-            os.environ["PATH"] = f"{intel_openjdk}:{os.environ.get('PATH', '')}"
-        os.environ.setdefault("JAVA_HOME", "/usr/local/opt/openjdk")
-        return
-
-
-def _run_opendataloader(pdf_path: str) -> dict:
-    """OpenDataLoader PDF 엔진으로 변환을 수행하여 계층적 JSON 딕셔너리를 반환합니다.
-    자바 기반의 결정론적 레이아웃 엔진으로 별도 GPU 없이 초고속(0.015초/p)으로 실행됩니다."""
-    with _opendataloader_lock:
-        if pdf_path in _opendataloader_cache:
-            return _opendataloader_cache[pdf_path]
-
-        _ensure_java_available()
-        import json
-        import os
-        import tempfile
-        import opendataloader_pdf
-
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            opendataloader_pdf.convert(
-                input_path=[pdf_path],
-                output_dir=tmp_dir,
-                format="json,markdown"
-            )
-            base_name = os.path.splitext(os.path.basename(pdf_path))[0]
-            json_file = os.path.join(tmp_dir, f"{base_name}.json")
-            if not os.path.exists(json_file):
-                for f in os.listdir(tmp_dir):
-                    if f.endswith(".json"):
-                        json_file = os.path.join(tmp_dir, f)
-                        break
-
-            if not os.path.exists(json_file):
-                raise RuntimeError(f"OpenDataLoader JSON 출력 파일을 찾을 수 없습니다: {tmp_dir}")
-
-            with open(json_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-
-        if len(_opendataloader_cache) >= 8:
-            _opendataloader_cache.pop(next(iter(_opendataloader_cache)))
-        _opendataloader_cache[pdf_path] = data
-        return data
-
-
-def _opendataloader_page_regions(kids: List[Dict[str, Any]], pdf_path: str) -> List[Dict[str, Any]]:
-    """OpenDataLoader kids 목록에서 table, picture/image, equation 영역을 추출해
-    0~100% 비율 좌표 및 캡션/라벨 목록으로 변환합니다."""
-    if not kids:
-        return []
-
-    page_dims: Dict[int, Tuple[float, float]] = {}
-    if pdf_path and os.path.exists(pdf_path):
-        try:
-            with fitz.open(pdf_path) as d:
-                for p_idx in range(len(d)):
-                    p = d[p_idx]
-                    page_dims[p_idx + 1] = (float(p.rect.width), float(p.rect.height))
-        except Exception:
-            pass
-
-    captions_by_page: Dict[int, List[Dict[str, Any]]] = {}
-    for item in kids:
-        if item.get("type") == "caption":
-            p_num = item.get("page number", 1)
-            captions_by_page.setdefault(p_num, []).append(item)
-
-    regions_data: List[Dict[str, Any]] = []
-
-    for item in kids:
-        t = item.get("type")
-        if t not in ("picture", "image", "chart", "table", "equation", "formula"):
-            continue
-
-        raw_bbox = item.get("bounding box")
-        if not raw_bbox or len(raw_bbox) != 4:
-            continue
-
-        p_num = item.get("page number", 1)
-        pw, ph = page_dims.get(p_num, (595.0, 842.0))
-        if pw <= 0 or ph <= 0:
-            continue
-
-        left, bottom, right, top = float(raw_bbox[0]), float(raw_bbox[1]), float(raw_bbox[2]), float(raw_bbox[3])
-        x0 = max(0.0, min(left, pw))
-        x1 = max(0.0, min(right, pw))
-        y0 = max(0.0, min(ph - top, ph))
-        y1 = max(0.0, min(ph - bottom, ph))
-        if y0 > y1:
-            y0, y1 = y1, y0
-        if x0 > x1:
-            x0, x1 = x1, x0
-
-        left_pct = (x0 / pw) * 100.0
-        top_pct = (y0 / ph) * 100.0
-        width_pct = ((x1 - x0) / pw) * 100.0
-        height_pct = ((y1 - y0) / ph) * 100.0
-
-        if width_pct < 0.5 or height_pct < 0.3:
-            continue
-
-        label, caption = None, None
-        content_txt = (item.get("content") or "").strip()
-
-        if t in ("picture", "image", "chart"):
-            item_id = item.get("id")
-            matched_cap = None
-            if item_id is not None:
-                for cap in captions_by_page.get(p_num, []):
-                    if cap.get("linked content id") == item_id:
-                        matched_cap = cap.get("content", "")
-                        break
-            if not matched_cap and captions_by_page.get(p_num):
-                best_dist = 999999.0
-                for cap in captions_by_page.get(p_num, []):
-                    c_text = (cap.get("content") or "").strip()
-                    if re.match(r"^\s*Fig", c_text, re.IGNORECASE):
-                        c_bbox = cap.get("bounding box")
-                        if c_bbox and len(c_bbox) == 4:
-                            c_top = ph - float(c_bbox[3])
-                            dist = abs(c_top - y1)
-                            if dist < best_dist and dist < 150.0:
-                                best_dist = dist
-                                matched_cap = c_text
-            label, caption = _match_label_from_caption_text(matched_cap or content_txt or None)
-            if not label and re.match(r"^\s*Fig", content_txt, re.IGNORECASE):
-                label, caption = _match_label_from_caption_text(content_txt)
-        elif t == "table":
-            item_id = item.get("id")
-            matched_cap = None
-            if item_id is not None:
-                for cap in captions_by_page.get(p_num, []):
-                    if cap.get("linked content id") == item_id:
-                        matched_cap = cap.get("content", "")
-                        break
-            if not matched_cap and captions_by_page.get(p_num):
-                best_dist = 999999.0
-                for cap in captions_by_page.get(p_num, []):
-                    c_text = (cap.get("content") or "").strip()
-                    if re.match(r"^\s*Tab", c_text, re.IGNORECASE):
-                        c_bbox = cap.get("bounding box")
-                        if c_bbox and len(c_bbox) == 4:
-                            c_bottom = ph - float(c_bbox[1])
-                            dist = abs(y0 - c_bottom)
-                            if dist < best_dist and dist < 150.0:
-                                best_dist = dist
-                                matched_cap = c_text
-            label, caption = _match_label_from_caption_text(matched_cap or content_txt or None)
-            if not label and re.match(r"^\s*Tab", content_txt, re.IGNORECASE):
-                label, caption = _match_label_from_caption_text(content_txt)
-        else: # equation, formula
-            m = _EQUATION_LINE_RE.search(content_txt)
-            label = f"Equation {m.group(1)}" if m and m.group(1) else "Equation"
-            caption = content_txt or None
-
-        regions_data.append({
-            "page": p_num,
-            "left": left_pct,
-            "top": top_pct,
-            "width": width_pct,
-            "height": height_pct,
-            "label": label,
-            "caption": caption,
-        })
-
-    return regions_data
-
-
-_mineru_run_lock = threading.Lock()
-_mineru_cache: Dict[str, tuple] = {}
-
-
+# ── MinerU 엔진 연동 ──────────────────────────────────────────────────────
+@lru_cache(maxsize=2)
 def _run_mineru(pdf_path: str) -> tuple:
     """MinerU pipeline 백엔드로 파싱해 content_list(블록별 type/bbox/caption 목록)를
     돌려준다. do_parse()는 결과를 디스크에 파일로만 저장하므로 임시 디렉터리에
     받아 content_list.json을 읽어들인다. bbox는 0~1000 범위로 정규화되어 있다
-    (MinerU 자체 규격 - 페이지 크기와 무관하게 그대로 퍼센트 변환 가능).
-    
-    Apple Silicon Metal(MPS) 동시 접근 충돌을 방지하기 위해 프로세스 내
-    _mineru_run_lock으로 동시 실행을 직렬화하고, 실행 후 MPS 캐시를 동기화/정리한다."""
-    with _mineru_run_lock:
-        if pdf_path in _mineru_cache:
-            return _mineru_cache[pdf_path]
+    (MinerU 자체 규격 - 페이지 크기와 무관하게 그대로 퍼센트 변환 가능)."""
+    import json
+    import os
+    import tempfile
+    from mineru.cli.common import do_parse
 
-        import json
-        import os
-        import tempfile
-        from mineru.cli.common import do_parse
+    with open(pdf_path, "rb") as f:
+        pdf_bytes = f.read()
 
-        with open(pdf_path, "rb") as f:
-            pdf_bytes = f.read()
-
-        pdf_file_name = "doc"
-        try:
-            with tempfile.TemporaryDirectory() as tmp_dir:
-                do_parse(
-                    output_dir=tmp_dir,
-                    pdf_file_names=[pdf_file_name],
-                    pdf_bytes_list=[pdf_bytes],
-                    p_lang_list=["en"],
-                    backend="pipeline",
-                    f_draw_layout_bbox=False,
-                    f_draw_span_bbox=False,
-                    f_dump_md=False,
-                    f_dump_middle_json=False,
-                    f_dump_model_output=False,
-                    f_dump_orig_pdf=False,
-                    f_dump_content_list=True,
-                )
-                content_list_path = os.path.join(tmp_dir, pdf_file_name, "auto", f"{pdf_file_name}_content_list.json")
-                with open(content_list_path, "r", encoding="utf-8") as f:
-                    content_list = json.load(f)
-
-            res = tuple(content_list)
-            if len(_mineru_cache) >= 4:
-                _mineru_cache.pop(next(iter(_mineru_cache)))
-            _mineru_cache[pdf_path] = res
-            return res
-        finally:
-            try:
-                import torch
-                if hasattr(torch, "mps") and hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                    torch.mps.synchronize()
-                    torch.mps.empty_cache()
-            except Exception:
-                pass
+    pdf_file_name = "doc"
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        do_parse(
+            output_dir=tmp_dir,
+            pdf_file_names=[pdf_file_name],
+            pdf_bytes_list=[pdf_bytes],
+            p_lang_list=["en"],
+            backend="pipeline",
+            f_draw_layout_bbox=False,
+            f_draw_span_bbox=False,
+            f_dump_md=False,
+            f_dump_middle_json=False,
+            f_dump_model_output=False,
+            f_dump_orig_pdf=False,
+            f_dump_content_list=True,
+        )
+        content_list_path = os.path.join(tmp_dir, pdf_file_name, "auto", f"{pdf_file_name}_content_list.json")
+        with open(content_list_path, "r", encoding="utf-8") as f:
+            content_list = json.load(f)
+    return tuple(content_list)
 
 
 def _mineru_item_text(item: Dict[str, Any]) -> str:
@@ -1878,6 +1832,10 @@ def _mineru_page_regions(content_list: tuple) -> Dict[int, List[Dict[str, Any]]]
             "left": left, "top": top, "width": width, "height": height,
             "label": label, "caption": caption,
         })
+
+    for page_idx in list(regions_by_page.keys()):
+        regions_by_page[page_idx] = _absorb_unlabeled_figure_panels(regions_by_page[page_idx])
+
     return regions_by_page
 
 
@@ -1908,7 +1866,8 @@ def _find_page_captions(page: "fitz.Page") -> List[Dict[str, Any]]:
         for i, plain_text in enumerate(plain_line_texts):
             if not plain_text:
                 continue
-            m = _CAPTION_RE.match(plain_text)
+            cleaned = _clean_caption_for_matching(plain_text)
+            m = _CAPTION_RE.match(cleaned)
             # 로마 숫자 대안 분기(_ROMAN_NUMERAL_RE)는 lookahead만으로는 빈 문자열
             # 매칭을 완전히 막지 못한다 - "Table Introduction..."처럼 로마 숫자
             # 글자(I/V/X/L/C/D/M)로 시작하는 일반 단어가 뒤따르면 숫자 그룹이
@@ -1916,7 +1875,7 @@ def _find_page_captions(page: "fitz.Page") -> List[Dict[str, Any]]:
             # 비어 있으면 실제 캡션이 아니므로 명시적으로 걸러낸다.
             if not m or not m.group(2):
                 continue
-            kind = "Figure" if m.group(1).lower().startswith("fig") else "Table"
+            kind = "Figure" if (m.group(1).lower().startswith("fig") or m.group(1) == "그림") else "Table"
             # 로마 숫자는 대소문자 상관없이 매칭되지만("fig. iv"도 허용), 프론트엔드의
             # 본문 참조 매칭과 항상 같은 대문자 표기로 라벨을 맞춰야 한다(대문자
             # 로마 숫자가 관례이므로 digit은 그대로 두고 로마 숫자만 사실상 영향받음).
@@ -2536,20 +2495,16 @@ def extract_pdf_images(pdf_path: str, engine: Optional[str] = None) -> List[Dict
 
     engine = (engine or "pymupdf").lower().strip()
 
+    if engine in {"marker", "mineru"} and not (os.getenv("HJPAPER_ISOLATED_WORKER") or os.getenv("EASYPAPER_ISOLATED_WORKER")):
+        import logging
+        logging.info(f"파서 엔진 {engine} 이미지 추출은 격리된 워커 환경에서만 실행 가능하므로, 메인 프로세스에서는 PyMuPDF로 안전하게 폴백합니다.")
+        engine = "pymupdf"
+
     # marker/mineru는 자체 레이아웃 모델이 이미 figure/table/equation 영역과
     # (그룹인 경우) 캡션까지 감지해준다 - pymupdf 휴리스틱을 돌릴 필요가 없고,
     # 오히려 marker/mineru가 인식한 실제 텍스트 순서/구조와 무관한 별개의 좌표계라
     # 섞어 쓰면 안 된다. 실패 시에만 pymupdf 휴리스틱으로 폴백한다.
-    if engine == "opendataloader":
-        try:
-            data = _run_opendataloader(pdf_path)
-            kids = data.get("kids", [])
-            return _opendataloader_page_regions(kids, pdf_path)
-        except Exception as e:
-            import logging
-            logging.warning(f"OpenDataLoader 레이아웃 추출 실패 ({e}). PyMuPDF 휴리스틱으로 폴백합니다.")
-            engine = "pymupdf"
-    elif engine == "marker":
+    if engine == "marker":
         try:
             from marker.renderers.json import JSONRenderer
             document, converter = _build_marker_document(pdf_path)
@@ -2878,8 +2833,115 @@ def _extract_pdf_images_from_doc(doc, pdf_path: str, engine: str) -> List[Dict[s
             if w <= 0 or h <= 0:
                 continue
 
+            images_data.append({
+                "page": page_num + 1,
+                "left": (x0 / page_width) * 100,
+                "top": (y0 / page_height) * 100,
+                "width": (w / page_width) * 100,
+                "height": (h / page_height) * 100,
+                "label": eq["label"],
+                "caption": None,
+            })
+
+    return images_data
+
+
+_PDF_REFERENCE_ENTRY_START_RE = re.compile(
+    r"^\s*(?:"
+    r"\[[A-Za-z0-9+]+\]\s*|"
+    r"\d{1,4}[.)]\s*|"
+    r"[A-ZÀ-ÖØ-Þ\u0100-\u024F\u1E00-\u1EFF][A-Za-zÀ-ÖØ-öø-ÿ\u0100-\u024F\u1E00-\u1EFF'’ﬀ\-]*"
+    r"(?:\s+[A-ZÀ-ÖØ-Þ\u0100-\u024F\u1E00-\u1EFF][A-Za-zÀ-ÖØ-öø-ÿ\u0100-\u024F\u1E00-\u1EFF'’ﬀ\-]*){0,5},(?:\s|$)|"
+    r"[A-ZÀ-ÖØ-Þ\u0100-\u024F\u1E00-\u1EFF][A-Za-zÀ-ÖØ-öø-ÿ\u0100-\u024F\u1E00-\u1EFF'’ﬀ\-]*"
+    r"(?:\s+[A-ZÀ-ÖØ-Þ\u0100-\u024F\u1E00-\u1EFF][A-Za-zÀ-ÖØ-öø-ÿ\u0100-\u024F\u1E00-\u1EFF'’ﬀ\-]*){1,8}\s+\(\d{4}"
+    r"|(?:von|van|de|da|del|der)\s+[A-ZÀ-ÖØ-Þ\u0100-\u024F\u1E00-\u1EFF][A-Za-zÀ-ÖØ-öø-ÿ\u0100-\u024F\u1E00-\u1EFF'’ﬀ\-]*,"
+    r")"
+)
+
+
+def _get_pdf_link_destination_text(page: "fitz.Page", x_top: float, y_top: float) -> str:
+    """Return the bibliography entry or text line an internal link points at.
+
+    A fixed-height clip around the destination is tempting, but compact
+    reference lists can contain several complete entries in that area.  That
+    made a link to reference 1 preview adjacent entries.  Two-column reference
+    lists may also expose an entire column as one PyMuPDF block, so the target
+    x coordinate and line-level entry boundaries are both required.
+    """
+    try:
+        blocks = [b for b in (page.get_text("dict") or {}).get("blocks", []) if b.get("type", 0) == 0]
+        # Filter blocks by column (horizontal proximity to x_top) to keep two-column layouts separate
+        matching_blocks = [
+            b for b in blocks
+            if max(b.get("bbox", (0, 0, 0, 0))[0] - x_top, 0.0, x_top - b.get("bbox", (0, 0, 0, 0))[2]) <= 25.0
+        ]
+        chosen_blocks = matching_blocks if matching_blocks else blocks
+
+        raw_lines = []
+        for block in chosen_blocks:
+            for line in block.get("lines", []):
+                text = "".join(str(span.get("text", "")) for span in line.get("spans", []))
+                cleaned = clean_diacritics(re.sub(r"\s+", " ", text).strip())
+                if cleaned:
+                    raw_lines.append((tuple(line.get("bbox", (0, 0, 0, 0))), cleaned))
+
+        if raw_lines:
+            clusters: List[List[tuple]] = []
+            for item in sorted(raw_lines, key=lambda it: it[0][1]):
+                placed = False
+                for cluster in clusters:
+                    if abs(cluster[0][0][1] - item[0][1]) <= 2.5:
+                        cluster.append(item)
+                        placed = True
+                        break
+                if not placed:
+                    clusters.append([item])
+
+            lines = []
+            for cluster in clusters:
+                sorted_cluster = sorted(cluster, key=lambda it: it[0][0])
+                merged_bbox = (
+                    min(it[0][0] for it in sorted_cluster),
+                    min(it[0][1] for it in sorted_cluster),
+                    max(it[0][2] for it in sorted_cluster),
+                    max(it[0][3] for it in sorted_cluster),
+                )
+                merged_text = " ".join(it[1] for it in sorted_cluster)
+                lines.append((merged_bbox, merged_text))
+
+            base_x = min(bbox[0] for bbox, _text in lines)
+            starts = [
+                i for i, (bbox, text) in enumerate(lines)
+                if bbox[0] <= base_x + 3.0 and _PDF_REFERENCE_ENTRY_START_RE.match(text)
+            ]
+            nearby_starts = [i for i in starts if abs(lines[i][0][1] - y_top) <= 24.0]
+            if nearby_starts:
+                start_idx = min(nearby_starts, key=lambda i: abs(lines[i][0][1] - y_top))
+                next_starts = [i for i in starts if i > start_idx]
+                end_idx = min(next_starts) if next_starts else len(lines)
+                return " ".join(text for _bbox, text in lines[start_idx:end_idx])
+
+            nearest_idx = min(
+                range(len(lines)),
+                key=lambda i: min(abs(lines[i][0][1] - y_top), abs(lines[i][0][3] - y_top)),
+            )
+            return lines[nearest_idx][1]
+    except Exception:
+        pass
+
+    # Unusual PDFs may expose no useful text blocks.  Retain a compact clip as
+    # a best-effort fallback rather than dropping the preview altogether.
+    clip_rect = fitz.Rect(
+        0,
+        max(0.0, y_top - 6.0),
+        page.rect.width,
+        min(page.rect.height, y_top + 42.0),
+    )
+    return clean_diacritics(re.sub(r"\s+", " ", page.get_text("text", clip=clip_rect)).strip())
+
+
 def get_pdf_internal_links(pdf_path: str) -> Dict[int, List[Dict[str, Any]]]:
-    """PDF 파일 내에 임베딩된 내부 하이퍼링크(어노테이션) 목록을 추출합니다.
+    """PDF 파일 내에 임베딩된 내부/외부 하이퍼링크(어노테이션) 목록을 추출합니다.
     Zotero의 고정밀 인용구/도표 매핑과 동일하게 원천 링크 대상과 텍스트를 제공합니다."""
     if not pdf_path or not os.path.exists(pdf_path):
         return {}
@@ -2888,6 +2950,17 @@ def get_pdf_internal_links(pdf_path: str) -> Dict[int, List[Dict[str, Any]]]:
     try:
         with fitz.open(pdf_path) as doc:
             num_pages = len(doc)
+            # A numeric internal link is not necessarily a bibliography
+            # citation: author affiliations and footnotes commonly reuse the
+            # same small numbers.  Locate the bibliography once so those
+            # generic internal links do not collide with reference keys.
+            reference_start_page_idx = None
+            for candidate_idx in range(num_pages - 1, -1, -1):
+                candidate_text = doc[candidate_idx].get_text("text") or ""
+                if re.search(r"(?im)^\s*(?:references|bibliography)\s*$", candidate_text):
+                    reference_start_page_idx = candidate_idx
+                    break
+
             for p_idx in range(num_pages):
                 page = doc[p_idx]
                 p_width = page.rect.width
@@ -2896,12 +2969,7 @@ def get_pdf_internal_links(pdf_path: str) -> Dict[int, List[Dict[str, Any]]]:
                     continue
 
                 for l in page.get_links():
-                    if l.get("kind") != fitz.LINK_GOTO:
-                        continue
-                    t_page = l.get("page", -1)
-                    if t_page < 0 or t_page >= num_pages:
-                        continue
-
+                    kind = l.get("kind")
                     from_rect = l.get("from")
                     if not from_rect:
                         continue
@@ -2912,42 +2980,131 @@ def get_pdf_internal_links(pdf_path: str) -> Dict[int, List[Dict[str, Any]]]:
                     width_pct = ((from_rect.x1 - from_rect.x0) / p_width) * 100.0
                     height_pct = ((from_rect.y1 - from_rect.y0) / p_height) * 100.0
 
-                    link_text = page.get_text("text", clip=from_rect).strip()
+                    link_text = clean_diacritics(page.get_text("text", clip=from_rect).strip())
+
+                    # 1. 외부 URL 링크 (LINK_URI)
+                    if kind == fitz.LINK_URI:
+                        uri = l.get("uri")
+                        if uri:
+                            links_by_page.setdefault(p_idx + 1, []).append({
+                                "from": [round(left_pct, 2), round(top_pct, 2), round(width_pct, 2), round(height_pct, 2)],
+                                "text": link_text,
+                                "dest_type": "uri",
+                                "uri": uri,
+                            })
+                        continue
+
+                    # 2. 내부 점프 링크 (LINK_GOTO: 번호 지정 점프, LINK_NAMED: 명명된 대상 점프)
+                    if kind not in (fitz.LINK_GOTO, fitz.LINK_NAMED):
+                        continue
+
+                    t_page = l.get("page", -1)
+                    if isinstance(t_page, str):
+                        if t_page.isdigit():
+                            t_page = int(t_page) - 1
+                        else:
+                            try:
+                                t_page = int(t_page)
+                            except Exception:
+                                t_page = -1
+                    elif isinstance(t_page, (int, float)):
+                        t_page = int(t_page)
+                    else:
+                        t_page = -1
+
+                    if t_page < 0 or t_page >= num_pages:
+                        continue
+
                     dest_pt = l.get("to")
-
                     dest_text = ""
+                    dest_y_pct = 0.0
                     dest_page = doc[t_page]
-                    if dest_pt and dest_page.rect.height > 0:
-                        y_anchor = dest_pt.y
-                        clip_rect = fitz.Rect(0, max(0.0, y_anchor - 10.0), dest_page.rect.width, min(dest_page.rect.height, y_anchor + 80.0))
-                        dest_text = dest_page.get_text("text", clip=clip_rect).strip().replace("\n", " ")
+                    has_coord = False
+                    x_coord = 0.0
+                    y_top = 0.0
 
-                    dest_type = "figure" if re.search(r'^(?:fig|figure|table|tab|equation|eq)\b', dest_text, re.IGNORECASE) else "reference"
+                    dest_str = l.get("dest") if isinstance(l.get("dest"), str) else ""
+                    viewrect_str = l.get("viewrect") if isinstance(l.get("viewrect"), str) else ""
+                    if dest_str and (dest_pt is None or (dest_pt.x == 0.0 and dest_pt.y == 0.0)):
+                        parts = dest_str.split()
+                        if parts:
+                            dest_cmd = parts[0].upper()
+                            try:
+                                if dest_cmd == "/FITR" and len(parts) >= 5:
+                                    left = float(parts[1])
+                                    bottom = float(parts[2])
+                                    right = float(parts[3])
+                                    top = float(parts[4])
+                                    x_coord = min(left, right)
+                                    y_top = max(0.0, dest_page.rect.height - max(bottom, top))
+                                    has_coord = True
+                                elif dest_cmd in ("/FITH", "/FITBH") and len(parts) >= 2:
+                                    top = float(parts[1])
+                                    x_coord = 0.0
+                                    y_top = max(0.0, dest_page.rect.height - top)
+                                    has_coord = True
+                                elif dest_cmd in ("/FITV", "/FITBV") and len(parts) >= 2:
+                                    left = float(parts[1])
+                                    x_coord = left
+                                    y_top = 0.0
+                                    has_coord = True
+                            except (ValueError, IndexError):
+                                pass
+
+                    if not has_coord and viewrect_str and (dest_pt is None or (dest_pt.x == 0.0 and dest_pt.y == 0.0)):
+                        try:
+                            vparts = [float(v.strip()) for v in viewrect_str.split(",")]
+                            if len(vparts) >= 4:
+                                vx, vy, vw, vh = vparts[:4]
+                                x_coord = vx
+                                y_top = max(0.0, dest_page.rect.height - max(vy, vy + vh))
+                                has_coord = True
+                        except (ValueError, IndexError):
+                            pass
+
+                    if not has_coord and dest_pt and dest_page.rect.height > 0:
+                        # PDF 사용자 좌표계는 하단 기준 원점이므로 PyMuPDF/CSS 상단 기준 좌표계로 반전
+                        x_coord = dest_pt.x
+                        y_top = max(0.0, dest_page.rect.height - dest_pt.y)
+                        has_coord = True
+
+                    if has_coord and dest_page.rect.height > 0:
+                        dest_y_pct = (y_top / dest_page.rect.height) * 100.0
+                        dest_text = _get_pdf_link_destination_text(dest_page, x_coord, y_top)
+
+                    # 링크 텍스트 및 도착 지점 텍스트를 종합해 링크 타입 분류
+                    if re.search(r'\b(?:fig(?:ure)?s?|figs?|그림|도)\b', link_text, re.IGNORECASE):
+                        dest_type = "figure"
+                    elif re.search(r'\b(?:tables?|tabs?|표)\b', link_text, re.IGNORECASE):
+                        dest_type = "table"
+                    elif re.search(r'\b(?:eq(?:uation)?s?|eqs?|수식)\b', link_text, re.IGNORECASE):
+                        dest_type = "equation"
+                    elif re.search(r'^(?:fig(?:ure)?s?|figs?|그림|도)\b', dest_text.strip(), re.IGNORECASE):
+                        dest_type = "figure"
+                    elif re.search(r'^(?:tables?|tabs?|표)\b', dest_text.strip(), re.IGNORECASE):
+                        dest_type = "table"
+                    elif re.search(r'^(?:eq(?:uation)?s?|eqs?|수식)\b', dest_text.strip(), re.IGNORECASE):
+                        dest_type = "equation"
+                    elif (reference_start_page_idx is not None and t_page >= reference_start_page_idx) or bool(_PDF_REFERENCE_ENTRY_START_RE.match(dest_text.strip())):
+                        dest_type = "reference"
+                    else:
+                        dest_type = "internal"
 
                     links_by_page.setdefault(p_idx + 1, []).append({
-                        "from": [left_pct, top_pct, width_pct, height_pct],
+                        "from": [round(left_pct, 2), round(top_pct, 2), round(width_pct, 2), round(height_pct, 2)],
                         "text": link_text,
                         "target_page": t_page + 1,
+                        "dest_y_pct": round(dest_y_pct, 2),
                         "dest_type": dest_type,
-                        "dest_text": dest_text[:200],
+                        "dest_text": clean_diacritics(dest_text[:500]),
                     })
     except Exception as e:
-        logger.warning(f"PDF 내부 링크 어노테이션 추출 실패: {e}")
+        logger.warning(f"PDF 하이퍼링크 어노테이션 추출 실패: {e}")
 
     return links_by_page
 
 
 def clear_parser_memory_cache() -> None:
     """Discard document-specific advanced parser artifacts after cache invalidation."""
-    try:
-        _build_marker_document.cache_clear()
-    except Exception:
-        pass
-    try:
-        _run_mineru.cache_clear()
-    except Exception:
-        pass
-    try:
-        _opendataloader_cache.clear()
-    except Exception:
-        pass
+    _build_marker_document.cache_clear()
+    _run_mineru.cache_clear()

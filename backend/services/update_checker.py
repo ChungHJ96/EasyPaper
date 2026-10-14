@@ -177,7 +177,7 @@ async def get_repository_changelog_markdown() -> Optional[str]:
 
     lines = [
         "# Changelog", "",
-        "EasyPaper의 Git 커밋 이력에서 자동 생성된 변경 이력입니다.", "",
+        "HJPaper의 Git 커밋 이력에서 자동 생성된 변경 이력입니다.", "",
     ]
     current_date = None
     for line in out.splitlines():

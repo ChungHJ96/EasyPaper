@@ -1,7 +1,10 @@
 import asyncio
 import json
+import logging
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
+
+logger = logging.getLogger(__name__)
 
 from config import get_trans_provider
 from routers.upload import require_session_owner
@@ -248,7 +251,7 @@ async def translate_page(
                                 matched_curr["trans"] = clean_synced
                                 cleaned_translation = cleaned_translation.replace(old_tail_trans, clean_synced, 1)
 
-            if document_mode == "general":
+            if document_mode == "general" and document_type == "technical":
                 from services.translation_quality import assert_translation_integrity
                 assert_translation_integrity(page_text, cleaned_translation)
             payload_data = {
@@ -261,6 +264,7 @@ async def translate_page(
             lib_save_translation(session_id, page_num, payload_json, suffix)
 
         except Exception as e:
+            logger.error(f"[translate_page] Translation failed for session {session_id} page {page_num}: {e}", exc_info=True)
             error_data = json.dumps({"error": {"code": "generation_failed", "params": {}, "fallback": "Generation failed."}, "done": True})
             yield f"data: {error_data}\n\n"
             return
@@ -369,9 +373,19 @@ async def translation_status(session_id: str, current_user: str = Depends(get_cu
 @router.post("/translate/{session_id}/clear-cache")
 async def clear_translation_cache(session_id: str, current_user: str = Depends(get_current_user)):
     """세션의 모든 번역 캐시와 라이브러리 번역 저장본 및 잡 상태를 지웁니다."""
-    require_session_owner(session_id, current_user)
+    # 소유권 확인: 활성 세션이 있으면 세션 소유권을, 세션이 없으면 PDF 재파싱 없이 라이브러리 문서 소유권만 확인
+    from routers.upload import sessions
+    if session_id in sessions:
+        if sessions[session_id].get("username") != current_user:
+            raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
+    else:
+        from services.ownership import require_owned_document
+        try:
+            require_owned_document(session_id, current_user)
+        except HTTPException:
+            raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
 
-    # 1. 파일 캐시 삭제
+    # 1. 파일 캐시 삭제 (번역 캐시 및 마크다운 파생 파일 정리 포함)
     from services.cache import clear_session_cache, clear_derived_session_cache
     clear_session_cache(session_id)
     clear_derived_session_cache(session_id)
@@ -382,7 +396,6 @@ async def clear_translation_cache(session_id: str, current_user: str = Depends(g
     from config import LIBRARY_DIR
     import os
     import shutil
-    import glob
     import json
     
     doc_dir = os.path.join(LIBRARY_DIR, session_id)
@@ -391,17 +404,6 @@ async def clear_translation_cache(session_id: str, current_user: str = Depends(g
         if os.path.exists(doc_trans_dir):
             shutil.rmtree(doc_trans_dir, ignore_errors=True)
             os.makedirs(doc_trans_dir, exist_ok=True)
-            
-        doc_md_dir = os.path.join(doc_dir, "md")
-        if os.path.exists(doc_md_dir):
-            shutil.rmtree(doc_md_dir, ignore_errors=True)
-            os.makedirs(doc_md_dir, exist_ok=True)
-
-        for f in glob.glob(os.path.join(doc_dir, "translation_*.md")):
-            try:
-                os.remove(f)
-            except OSError:
-                pass
         
     meta_path = os.path.join(LIBRARY_DIR, session_id, "metadata.json")
     if os.path.exists(meta_path):

@@ -103,6 +103,23 @@ export function getModeSetting(name, mode, storage = localStorage) {
   // 사용자의 기본 선호도라 일반 문서도 첫 사용 시 기존 값을 승계한다.
   if (raw === null && (normalizedMode === 'research' || SHARED_LEGACY_PREFERENCES.has(name))) {
     raw = storage.getItem(LEGACY_KEYS[name])
+    if (raw === null && name === 'theme') {
+      raw = storage.getItem('hjpaper_theme')
+    } else if (raw === null && name === 'accentColor') {
+      raw = storage.getItem('hjpaper_accent_color')
+    }
+  }
+  // 공유 선호도(테마, 강조색, 대상 언어)인 경우 한쪽 모드에만 값이 있고
+  // 다른 쪽 모드 키가 비어있으면 다른 모드의 값을 승계한다.
+  if (raw === null && SHARED_LEGACY_PREFERENCES.has(name)) {
+    const alternateMode = normalizedMode === 'research' ? 'general' : 'research'
+    raw = storage.getItem(modeSettingStorageKey(name, alternateMode))
+  }
+  // 테마의 경우 여전히 null이고 시스템(OS) 선호도가 라이트 모드이면 라이트 모드로 시작한다.
+  if (raw === null && name === 'theme') {
+    if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+      return 'light'
+    }
   }
   if (raw === null) return fallback
   if (name === "targetLang") {
@@ -121,8 +138,18 @@ export function getModeSetting(name, mode, storage = localStorage) {
 }
 
 export function setModeSetting(name, mode, value, storage = localStorage) {
-  const key = modeSettingStorageKey(name, mode)
+  const normalizedMode = normalizeSettingsMode(mode)
+  const key = modeSettingStorageKey(name, normalizedMode)
   storage.setItem(key, String(value))
+  if (name === 'theme') {
+    storage.setItem('theme', String(value))
+    storage.setItem('hjpaper_theme', String(value))
+  } else if (name === 'accentColor') {
+    storage.setItem('easypaper_accent_color', String(value))
+    storage.setItem('hjpaper_accent_color', String(value))
+  } else if (name === 'targetLang') {
+    storage.setItem('easypaper_target_lang', String(value))
+  }
   return value
 }
 

@@ -13,7 +13,7 @@ from config import LIBRARY_DIR
 from services.db import get_db
 from services.pdf_diagnostics import diagnose_pages, parser_identity, pdf_fingerprint
 
-_ALLOWED_ENGINES = {"pymupdf", "pdfplumber", "marker", "mineru"}
+_ALLOWED_ENGINES = {"mineru", "pymupdf"}
 _preview_workers: dict[str, asyncio.Task] = {}
 _apply_locks: dict[str, asyncio.Lock] = {}
 
@@ -86,6 +86,9 @@ def _worker_command(engine: str, pdf_path: str, output_path: str) -> tuple[list[
     import venv_manager
 
     env = dict(os.environ)
+    env["HJPAPER_ISOLATED_WORKER"] = "1"
+    env["EASYPAPER_ISOLATED_WORKER"] = "1"
+    env.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
     python_executable = sys.executable
     if not venv_manager.is_packaged_desktop():
         target_venv = venv_manager.required_venv_for_engine(engine)
@@ -113,7 +116,7 @@ def parse_document_isolated(pdf_path: str, engine: str) -> dict:
     import subprocess
     import tempfile
 
-    with tempfile.TemporaryDirectory(prefix="easypaper-parser-") as temp_dir:
+    with tempfile.TemporaryDirectory(prefix="hjpaper-parser-") as temp_dir:
         output_path = os.path.join(temp_dir, "result.json")
         command, env = _worker_command(engine, pdf_path, output_path)
         result = subprocess.run(

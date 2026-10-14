@@ -22,9 +22,10 @@
 """
 
 import re
+import unicodedata
 from typing import Dict, List, Optional
 
-from services.pdf_parser import _INDENT_SENTINEL
+from services.pdf_parser import _INDENT_SENTINEL, clean_diacritics
 
 # 헤더 단어의 글자 사이에 공백을 허용한다 - 드롭캡(첫 글자만 별도 폰트/굵기)
 # 렌더링 시 "**R** **EFERENCES**"처럼 글자 사이에 공백이 끼어드는 경우까지
@@ -49,11 +50,9 @@ _PLAIN_NUMBERED_ENTRY_RE = re.compile(r"^\s*(\d{1,3})[.)]\s+(.+)")
 # 그대로 항목 텍스트로 잘라내므로, 항목 중간에 줄바꿈이 끼어 있든 두 항목이
 # 줄바꿈 없이 붙어 있든 항목 경계를 정확히 잡아낼 수 있다.
 _BRACKET_MARKER_RE = re.compile(r"\[(" + _BRACKET_KEY_RE.pattern + r")\]")
-# 평문 번호형은 대괄호보다 오탐 위험이 크다(항목 안에 흔한 "vol. 12," 같은
-# 숫자+마침표와 구분이 안 됨) - 뒤에 대문자/한글이 바로 이어질 때만 후보로
-# 인정하고, _extract_marker_entries에서 1부터 정확히 연속되는 번호만 채택해
-# 우연히 일치하는 페이지/연도 숫자를 걸러낸다.
-_PLAIN_NUMBERED_MARKER_RE = re.compile(r"(?:^|\s)(\d{1,3})[.)]\s+(?=[A-Z가-힣])")
+_PLAIN_NUMBERED_MARKER_RE = re.compile(
+    r"(?:^|\s)(\d{1,3})[.)]\s+(?=[A-ZÀ-ÖØ-Þ\u0100-\u024F\u1E00-\u1EFF가-힣])"
+)
 
 # References 섹션 뒤에 곧바로 이어지는 Appendix 표제 - 표제만 딱 담긴 줄에만
 # 일치하도록(문장 중간의 "see Appendix B" 같은 언급과 구분) 줄 전체를 앵커링한다.
@@ -80,7 +79,10 @@ _APPENDIX_HEADER_RE = re.compile(
 # 온다는 차이가 있어, 콤마 뒤에 숫자가 바로 오는 경우는 항목 시작으로 인정하지
 # 않는다(그 대가로 저자 이니셜 없이 "Google, 2023."처럼 곧장 연도가 오는
 # 극히 드문 기관 저자 항목은 놓칠 수 있음).
-_AUTHOR_YEAR_SURNAME_WORD_SRC = r"[A-ZÀ-Ö][A-Za-zÀ-ÖØ-öø-ÿ\-']*"
+_AUTHOR_YEAR_SURNAME_WORD_SRC = (
+    r"[A-ZÀ-ÖØ-Þ\u0100-\u024F\u1E00-\u1EFF]"
+    r"[A-Za-zÀ-ÖØ-öø-ÿ\u0100-\u024F\u1E00-\u1EFF\-'\u2019]*"
+)
 _AUTHOR_YEAR_SURNAME_SRC = (
     "(" + _AUTHOR_YEAR_SURNAME_WORD_SRC + ")"
     r"(?:\s" + _AUTHOR_YEAR_SURNAME_WORD_SRC + r")*"
@@ -145,7 +147,7 @@ def find_reference_start_page_index(pages: List[dict]) -> Optional[int]:
     (읽은 페이지 수 계산에서 참고문헌 페이지를 제외하는 데 사용) 양쪽에서
     공유합니다."""
     for i in range(len(pages) - 1, -1, -1):
-        text = pages[i].get("text", "") or ""
+        text = clean_diacritics(pages[i].get("text", "") or "")
         if any(_match_section_header_prefix(line) is not None for line in text.split("\n")):
             return i
     return None
@@ -169,7 +171,7 @@ def _extract_reference_list_impl(pages: List[dict]) -> Dict[str, str]:
     if ref_start_page_idx is None:
         return {}
 
-    combined_text = "\n".join(p.get("text", "") or "" for p in pages[ref_start_page_idx:])
+    combined_text = clean_diacritics("\n".join(p.get("text", "") or "" for p in pages[ref_start_page_idx:]))
     # pdf_parser.py가 들여쓰기된 문단 앞에 붙이는 내부 마커(_INDENT_SENTINEL) -
     # 원래는 chunker.py가 번역 파이프라인에서 소비하는 표시인데, 참고문헌
     # 목록의 줄바꿈된 항목(첫 줄은 안 들여써지고 이어지는 줄은 들여써지는
@@ -231,11 +233,18 @@ def _extract_marker_entries(text: str, marker_re: "re.Pattern", sequential: bool
     if sequential:
         filtered = []
         expected = 1
-        for m in matches:
-            if int(m.group(1)) != expected:
-                continue
-            filtered.append(m)
-            expected += 1
+        for idx, m in enumerate(matches):
+            val = int(m.group(1))
+            if val == expected:
+                filtered.append(m)
+                expected += 1
+            elif val > expected and val <= expected + 2:
+                # OCR 글자 오인이나 특수문자 누락으로 1개 번호가 건너뛰어졌을 때,
+                # 이후 번호(val+1)가 연속으로 이어지면 허용하여 전체 참고문헌이 통째로 유실되는 것을 방지
+                subsequent_vals = [int(matches[k].group(1)) for k in range(idx + 1, min(len(matches), idx + 4))]
+                if (val + 1) in subsequent_vals:
+                    filtered.append(m)
+                    expected = val + 1
         matches = filtered
 
     entries: Dict[str, str] = {}
@@ -288,4 +297,15 @@ def _parse_author_year_entries(body_text: str) -> Dict[str, str]:
         key = f"{surname_match.group(1).lower()}{year}"
         if key not in entries:
             entries[key] = text[:_MAX_ENTRY_LENGTH]
+        # Store ASCII-folded alias key if different (e.g. 'harkonen2006' alongside 'härkönen2006')
+        ascii_surname = (
+            unicodedata.normalize("NFKD", surname_match.group(1))
+            .encode("ascii", "ignore")
+            .decode("ascii")
+            .lower()
+        )
+        if ascii_surname:
+            ascii_key = f"{ascii_surname}{year}"
+            if ascii_key not in entries:
+                entries[ascii_key] = text[:_MAX_ENTRY_LENGTH]
     return entries

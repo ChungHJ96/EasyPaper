@@ -39,7 +39,8 @@ def test_generate_pdf_bakes_highlight_annotation(sample_pdf):
     annotations = {"page_1": [{"type": "highlight", "text": "self-attention mechanisms", "color": "#eab308"}]}
     result = generate_annotated_pdf(sample_pdf, annotations, {}, {})
     doc = fitz.open("pdf", result)
-    page1_annots = list(doc[0].annots())
+    page = doc[0]
+    page1_annots = list(page.annots())
     assert len(page1_annots) == 1
     assert page1_annots[0].type[1] == "Highlight"
     doc.close()
@@ -49,7 +50,8 @@ def test_generate_pdf_bakes_underline_annotation(sample_pdf):
     annotations = {"page_1": [{"type": "underline", "text": "self-attention mechanisms", "color": "#ef4444"}]}
     result = generate_annotated_pdf(sample_pdf, annotations, {}, {})
     doc = fitz.open("pdf", result)
-    page1_annots = list(doc[0].annots())
+    page = doc[0]
+    page1_annots = list(page.annots())
     assert len(page1_annots) == 1
     assert page1_annots[0].type[1] == "Underline"
     doc.close()

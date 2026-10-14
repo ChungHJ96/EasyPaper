@@ -64,3 +64,37 @@ def test_normal_page_without_diagrams_is_unaffected(tmp_path):
 
     assert paragraph_1 in page_text
     assert paragraph_2 in page_text
+
+
+def test_abstract_inside_shaded_callout_box_is_preserved(tmp_path):
+    """Wiley 등 학술 저널에서 Abstract가 음영 사각형(회색 배경 박스) 안에
+    배치되어 있어도 다이어그램으로 오인해 누락하지 않고 온전히 추출되어야 한다."""
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+
+    title_text = "Ecological Monitoring and Seal Population Dynamics"
+    page.insert_text((50, 60), title_text, fontsize=14)
+
+    # 저널 스타일 음영 배경 박스 (stroke 없이 연회색 fill)
+    abstract_box = fitz.Rect(50, 120, 545, 350)
+    page.draw_rect(abstract_box, fill=(0.90, 0.90, 0.91), color=None)
+
+    abstract_heading = "Abstract"
+    abstract_content = "1. The population has been monitored over 120 years under various ecological conditions."
+    page.insert_text((60, 150), abstract_heading, fontsize=11)
+    page.insert_text((60, 180), abstract_content, fontsize=10)
+
+    body_text = "Introduction. Marine ecosystems require continuous assessment."
+    page.insert_text((50, 400), body_text, fontsize=11)
+
+    path = tmp_path / "shaded_abstract.pdf"
+    doc.save(str(path))
+    doc.close()
+
+    pages = extract_pages(str(path))
+    page_text = pages[0]["text"]
+
+    assert title_text in page_text
+    assert "Abstract" in page_text
+    assert "monitored over 120 years" in page_text
+    assert body_text in page_text

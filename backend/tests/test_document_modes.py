@@ -80,9 +80,16 @@ def test_workspace_settings_round_trip(isolated_dirs):
     db = isolated_dirs["db"]
     saved = db.db_upsert_workspace_settings(
         "admin", 1, "general", {"manual": {"ignore_table": False}},
+        theme="light", accent_color="#e0677a",
     )
     assert saved["preferred_workspace_mode"] == "general"
     assert saved["document_type_options"]["manual"]["ignore_table"] is False
+    assert saved["theme"] == "light"
+    assert saved["accent_color"] == "#e0677a"
+
+    fetched = db.db_get_workspace_settings("admin")
+    assert fetched["theme"] == "light"
+    assert fetched["accent_color"] == "#e0677a"
 
 
 def test_workspace_and_document_type_endpoints(test_client):
@@ -92,12 +99,17 @@ def test_workspace_and_document_type_endpoints(test_client):
 
     response = test_client.patch(
         "/api/settings/workspace",
-        json={"onboarding_version": 1, "preferred_workspace_mode": "general"},
+        json={"onboarding_version": 1, "preferred_workspace_mode": "general", "theme": "light", "accent_color": "#e0677a"},
     )
     assert response.status_code == 200
     assert response.json()["preferred_workspace_mode"] == "general"
+    assert response.json()["theme"] == "light"
+    assert response.json()["accent_color"] == "#e0677a"
     assert test_client.patch(
         "/api/settings/workspace", json={"preferred_workspace_mode": "invalid"},
+    ).status_code == 400
+    assert test_client.patch(
+        "/api/settings/workspace", json={"theme": "invalid"},
     ).status_code == 400
 
 
@@ -443,6 +455,26 @@ def test_translation_integrity_rejects_missing_protected_literals():
     source = "Run `npm install` at https://example.test and wait 30s."
     with pytest.raises(TranslationIntegrityError):
         assert_translation_integrity(source, "설치를 실행하고 기다리세요.")
+
+
+def test_protected_literals_excludes_words_and_articles_mistaken_for_units():
+    from services.translation_quality import protected_literals
+    source = (
+        "Chapter 10.6 Anthropogenic Impacts 385. "
+        "Fig. 10.1 A harbor seal atop a rocky coastline. "
+        "In the 1990s and 2000s, nursing lasted 25-160 s periods. "
+        "Threshold is 10% and current is 5A."
+    )
+    lits = protected_literals(source)
+    assert "10.6 A" not in lits
+    assert "10.1 A" not in lits
+    assert "1990s" not in lits
+    assert "2000s" not in lits
+    assert "10.6" in lits
+    assert "385" in lits
+    assert "10.1" in lits
+    assert "10%" in lits
+    assert "5A" in lits
 
 
 def test_general_document_types_have_distinct_english_task_rules():

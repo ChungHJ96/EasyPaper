@@ -335,10 +335,25 @@ export function refreshTextLayerGeometry(onUpdated) {
   }
 }
 
-/** 특정 페이지 wrapper로 스크롤 */
-export function scrollToPage(container, pageNum, { instant = false } = {}) {
-  const el = container.querySelector(`[data-page="${pageNum}"]`)
-  if (el) el.scrollIntoView({ behavior: instant ? 'auto' : 'smooth', block: 'start' })
+/** 특정 페이지 wrapper로 스크롤 (선택적으로 yPct 위치로 정밀 스크롤) */
+export function scrollToPage(container, pageNum, { instant = false, yPct = null } = {}) {
+  const el = container.querySelector(`.pdf-page-wrapper[data-page="${pageNum}"]`) ||
+             container.querySelector(`[data-page="${pageNum}"]`)
+  if (el) {
+    if (typeof yPct === 'number' && yPct >= 0) {
+      const cRect = container.getBoundingClientRect()
+      // yPct는 PDF 페이지 자체의 좌표이므로 flex item인 wrapper가 아니라 실제
+      // PDF 면(.pdf-page-inner)을 기준으로 계산한다. 번역 패널이 더 길거나 아직
+      // lazy render 중이라 wrapper 높이가 임시값인 경우에도 목적지가 밀리지 않는다.
+      const pageSurface = el.querySelector?.('.pdf-page-inner') || el
+      const pageRect = pageSurface.getBoundingClientRect()
+      const pageTopInContainer = pageRect.top - cRect.top + container.scrollTop
+      const targetTop = pageTopInContainer + (pageRect.height * (yPct / 100.0)) - 70
+      container.scrollTo({ top: Math.max(0, targetTop), behavior: instant ? 'auto' : 'smooth' })
+    } else {
+      el.scrollIntoView({ behavior: instant ? 'auto' : 'smooth', block: 'start' })
+    }
+  }
 }
 
 /** 줌 변경 후 전체 재렌더링 */

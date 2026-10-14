@@ -20,14 +20,14 @@ DEFAULT_VENV = os.path.join(_BACKEND_DIR, ".venv")
 MINERU_VENV = os.path.join(_BACKEND_DIR, ".venv-mineru")
 
 PARSER_PACKAGES = {
-    "opendataloader": ("opendataloader-pdf", "opendataloader_pdf"),
     "pdfplumber": ("pdfplumber", "pdfplumber"),
     "marker": ("marker-pdf", "marker"),
     "mineru": ("mineru[pipeline]", "mineru"),
 }
 
 _PACKAGED_INSTALL_ARG = "--hjpaper-install-pdf-parser"
-_active_engine = "opendataloader"
+_LEGACY_PACKAGED_INSTALL_ARG = "--easypaper-install-pdf-parser"
+_active_engine = "pymupdf"
 
 
 def is_packaged_desktop() -> bool:
@@ -52,7 +52,15 @@ def is_parser_installed(engine: str) -> bool:
     package = PARSER_PACKAGES.get(engine)
     if not package:
         return False
-    return os.path.isdir(os.path.join(parser_packages_dir(engine), package[1]))
+    if os.path.isdir(os.path.join(parser_packages_dir(engine), package[1])):
+        return True
+    target_venv = required_venv_for_engine(engine)
+    if is_venv_available(target_venv):
+        import glob
+        site_packages = glob.glob(os.path.join(target_venv, "lib", "python*", "site-packages"))
+        if site_packages and os.path.isdir(os.path.join(site_packages[0], package[1])):
+            return True
+    return False
 
 
 def parser_install_command(engine: str) -> list[str]:
@@ -91,7 +99,7 @@ def run_packaged_parser_installer(argv: list[str] | None = None) -> int:
                 stream.reconfigure(encoding="utf-8", errors="replace")
 
     args = list(sys.argv[1:] if argv is None else argv)
-    if len(args) != 2 or args[0] != _PACKAGED_INSTALL_ARG:
+    if len(args) != 2 or args[0] not in (_PACKAGED_INSTALL_ARG, _LEGACY_PACKAGED_INSTALL_ARG):
         print("잘못된 PDF 파서 설치 명령입니다.", file=sys.stderr, flush=True)
         return 2
 
@@ -183,10 +191,7 @@ def current_venv_root() -> str:
 
 
 def restart_required_for_engine(engine: str) -> bool:
-    """설정된 엔진을 쓰려면 지금과 다른 venv로 재시작해야 하는지 여부.
-    필요한 venv가 아직 설치 전이면(mineru 미설치 등) 재시작해봐야 의미가
-    없으므로(어차피 폴백된다) False를 반환한다 - 설치 자체는 별도 설치
-    플로우(install-pdf-parser)의 몫이다."""
+    """설정된 엔진을 쓰려면 지금과 다른 venv로 재시작해야 하는지 여부."""
     if is_packaged_desktop():
         return is_parser_installed(engine) and engine != _active_engine
 

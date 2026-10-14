@@ -629,8 +629,29 @@
         <!-- page-pair 요소가 동적으로 생성됨 -->
       </div>
 
+      <!-- 이전 읽던 위치로 복귀(Jump Back) 플로팅 알약 -->
+      <div class="viewer-jump-back-pill hidden" id="viewer-jump-back-pill" role="status" aria-live="polite">
+        <button type="button" class="jump-back-action-btn" id="jump-back-action-btn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="9 14 4 9 9 4"/>
+            <path d="M20 20v-7a4 4 0 0 0-4-4H4"/>
+          </svg>
+          <span class="jump-back-label" id="jump-back-label"></span>
+          <kbd class="jump-back-shortcut" id="jump-back-shortcut">Alt+←</kbd>
+        </button>
+        <button type="button" class="jump-back-dismiss-btn" id="jump-back-dismiss-btn" title="닫기" aria-label="닫기">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
       <!-- 우측 하단 floating 스크롤 내비게이션 -->
       <div class="floating-scroll-nav" id="floating-scroll-nav">
+        <button id="scroll-jump-back-btn" class="floating-nav-btn jump-back-nav-btn hidden" type="button" aria-label="Jump back">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>
+        </button>
         <button id="scroll-top-btn" class="floating-nav-btn" title="맨 위로">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 11 12 6 7 11"/><polyline points="17 18 12 13 7 18"/></svg>
         </button>
@@ -871,7 +892,7 @@
   </div>
 
   <!-- 새 버전 업데이트 안내 모달 -->
-  <div id="update-available-modal" class="modal-overlay hidden" style="display: none !important;">
+  <div id="update-available-modal" class="modal-overlay hidden">
     <div class="modal-content" style="max-width: 440px;">
       <div class="modal-header">
         <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></svg>새 업데이트가 있습니다</h2>
@@ -897,7 +918,7 @@
   </div>
 
   <!-- 업데이트 완료 안내 모달 (업데이트 직후 1회만 표시) -->
-  <div id="update-complete-modal" class="modal-overlay hidden" style="display: none !important;">
+  <div id="update-complete-modal" class="modal-overlay hidden">
     <div class="modal-content" style="max-width: 440px;">
       <div class="modal-header">
         <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px; color: var(--success);"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>새 버전으로 업데이트되었습니다</h2>
@@ -918,11 +939,12 @@
 
   <!-- 전체 변경 이력(CHANGELOG.md) 모달 - 설정 화면의 버전 텍스트 클릭 시 표시 -->
   <div id="full-changelog-modal" class="modal-overlay hidden">
-    <div class="modal-content" style="max-width: 580px;">
+    <div class="modal-content" style="max-width: 520px;">
       <div class="modal-header">
-        <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>전체 변경 이력</h2>
+        <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>전체 변경 이력</h2>
         <button id="full-changelog-close-btn" class="close-btn">&times;</button>
       </div>
+      <div style="padding: 24px; max-height: 70vh; overflow-y: auto;">
         <div id="full-changelog-loading" style="font-size: 12.5px; color: var(--text-muted); text-align: center; padding: 20px 0;">불러오는 중...</div>
         <div id="full-changelog-content" class="full-changelog-content hidden"></div>
       </div>
@@ -1213,46 +1235,7 @@
             </div>
           </div>
 
-          <!-- PDF 파서 엔진 설정 -->
-          <div style="border-top: 1px solid var(--border); padding-top: 15px; margin-top: 15px;">
-            <h4 style="font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 10px; display: flex; align-items: center; gap: 4px;">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>PDF 파서 엔진 (PDF Parser Engine) 설정
-            </h4>
-            <div class="form-group">
-              <label>파서 엔진 선택</label>
-              <div id="setting-pdf-parser-picker"></div>
-              <div id="pdf-parser-info-card" style="margin-top: 10px; background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: 10px; padding: 12px 14px; font-size: 12.5px; line-height: 1.5; color: var(--text-primary);">
-                <div style="font-weight: 600; margin-bottom: 4px; color: var(--accent-mid);" id="pdf-parser-card-name">PyMuPDF (fitz)</div>
-                <div style="color: var(--text-secondary); margin-bottom: 6px;" id="pdf-parser-card-desc">기본 제공 파서 - 텍스트 중심 문서에서 초고속으로 작동합니다.</div>
-                <div style="display: flex; gap: 12px; font-size: 12px; border-top: 1px dashed var(--border); padding-top: 6px;">
-                  <div style="flex: 1;"><strong style="color: var(--accent-mid);">장점:</strong> <span id="pdf-parser-card-pros">초고속 (몇 ms 내 처리), 별도 설치 필요 없음</span></div>
-                  <div style="flex: 1;"><strong style="color: var(--text-muted);">단점:</strong> <span id="pdf-parser-card-cons">2단 복잡 구조, 수식 텍스트 엉킴 발생 가능</span></div>
-                </div>
-                <!-- 미설치 파서 설치 버튼 -->
-                <div id="pdf-parser-install-row" class="hidden" style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end;">
-                  <button id="pdf-parser-install-btn" type="button" style="display:inline-flex;align-items:center;gap:5px;background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.4);color:var(--accent-mid, #6366f1);border-radius:6px;padding:4px 12px;font-size:12px;font-weight:600;cursor:pointer;transition:all 0.15s ease;">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="8 17 12 21 16 17"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29"/></svg>
-                    패키지 설치
-                  </button>
-                </div>
-                <!-- 설치된 파서 삭제 버튼 -->
-                <div id="pdf-parser-uninstall-row" class="hidden" style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end;">
-                  <button id="pdf-parser-uninstall-btn" type="button" style="display:inline-flex;align-items:center;gap:5px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.4);color:#ef4444;border-radius:6px;padding:4px 12px;font-size:12px;font-weight:600;cursor:pointer;transition:all 0.15s ease;">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                    패키지 삭제
-                  </button>
-                </div>
-                <!-- 설정 카드 내부 직관적 인라인 다운로드 진행 화면 -->
-                <div id="pdf-parser-inline-progress" class="hidden" style="margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border);">
-                  <div style="font-size: 12.5px; font-weight: 600; color: var(--accent-mid); margin-bottom: 6px; display: flex; align-items: center; gap: 6px;" id="pdf-parser-inline-status">
-                    <svg class="spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-                    가상환경(.venv)에 설치 중입니다...
-                  </div>
-                  <pre id="pdf-parser-inline-log" style="width: 100%; height: 140px; background: #0d1117; color: #c9d1d9; border-radius: 6px; padding: 10px; font-family: var(--font-mono); font-size: 11px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; margin: 0; border: 1px solid var(--border-strong); box-sizing: border-radius;"></pre>
-                </div>
-              </div>
-            </div>
-          </div>
+
 
           <!-- 상위 기본 AI 설정 -->
           <div style="border-top: 1px solid var(--border); padding-top: 15px; margin-top: 15px;">
@@ -1488,10 +1471,21 @@
                   <div style="font-size: 12px; color: var(--text-secondary); margin-top: 2px;">학술 PDF 논문을 AI로 번역하고, 논문 내용을 바탕으로 바로 대화하는 통합 웹 서비스</div>
                 </div>
               </div>
+              <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                <a href="https://github.com/orion-gz/EasyPaper" target="_blank" rel="noopener noreferrer" class="btn btn-secondary" style="text-decoration: none; display: inline-flex; align-items: center; gap: 4px; padding: 8px 14px; font-size: 12.5px;">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>저장소 방문
+                </a>
+                <a href="https://github.com/orion-gz/EasyPaper/issues" target="_blank" rel="noopener noreferrer" class="btn btn-secondary" style="text-decoration: none; display: inline-flex; align-items: center; gap: 4px; padding: 8px 14px; font-size: 12.5px;">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>버그 제보
+                </a>
+                <a href="https://github.com/orion-gz/EasyPaper/pulls" target="_blank" rel="noopener noreferrer" class="btn btn-secondary" style="text-decoration: none; display: inline-flex; align-items: center; gap: 4px; padding: 8px 14px; font-size: 12.5px;">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M11 18H8a2 2 0 0 1-2-2V9"/></svg>기여하기
+                </a>
+              </div>
             </div>
           </div>
 
-          <div id="system-update-section" class="form-group" style="display: none !important;">
+          <div id="system-update-section" class="form-group">
             <label>시스템 업데이트 (System Update)</label>
             <div style="background: rgba(139, 92, 246, 0.1); border-left: 4px solid var(--accent-mid); padding: 12px 14px; border-radius: var(--radius-sm); margin-bottom: 12px; font-size: 12.5px; color: var(--text-primary); line-height: 1.6;">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg><strong>GitHub 최신 업데이트 확인 및 자동 빌드:</strong><br>
@@ -1524,7 +1518,7 @@
             </div>
           </div>
 
-          <div id="tauri-update-section" class="form-group hidden" style="display: none !important;">
+          <div id="tauri-update-section" class="form-group hidden">
             <label>앱 업데이트 (App Update)</label>
             <div style="background: rgba(139, 92, 246, 0.1); border-left: 4px solid var(--accent-mid); padding: 12px 14px; border-radius: var(--radius-sm); margin-bottom: 12px; font-size: 12.5px; color: var(--text-primary); line-height: 1.6;">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg><strong>데스크탑 앱 업데이트:</strong><br>
@@ -1726,68 +1720,7 @@
         <button id="primer-continue-btn" class="btn btn-primary">읽으러 가기</button>
       </div>
     </div>
-  <!-- PDF 파서 설치 동의 및 진행 상황 모달 (이모지 대신 SVG 벡터 아이콘 적용) -->
-  <div id="pdf-parser-install-modal" class="modal-overlay hidden" tabindex="-1" style="z-index: 12000;">
-    <div class="modal-content" style="max-width: 520px; border-radius: var(--radius-lg); padding: 24px; background: var(--bg-surface); border: 1px solid var(--border-strong); color: var(--text-primary); box-shadow: 0 20px 40px rgba(0,0,0,0.3);">
-      <!-- 헤더 -->
-      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
-        <h3 style="font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px; margin: 0; color: var(--text-primary);">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-mid)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-            <polyline points="7 10 12 15 17 10"/>
-            <line x1="12" y1="15" x2="12" y2="3"/>
-          </svg>
-          PDF 파서 패키지 추가 설치 안내
-        </h3>
-        <button type="button" id="pdf-parser-install-close-btn" class="modal-close" style="background: none; border: none; cursor: pointer; color: var(--text-muted); font-size: 20px;">&times;</button>
-      </div>
 
-      <!-- 안내 및 장단점 본문 -->
-      <div id="pdf-parser-install-intro">
-        <div style="background: rgba(139, 92, 246, 0.08); border: 1px solid rgba(139, 92, 246, 0.2); border-radius: var(--radius-md); padding: 14px 16px; margin-bottom: 16px; font-size: 13px; line-height: 1.6;">
-          <p id="pdf-parser-install-target-text" style="margin: 0 0 8px 0; font-weight: 600; color: var(--text-primary);"></p>
-          <p id="pdf-parser-install-desc-text" style="margin: 0 0 8px 0; color: var(--text-secondary);"></p>
-          <div style="display: flex; gap: 12px; font-size: 12px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border);">
-            <div style="flex: 1;"><strong style="color: var(--accent-mid);">장점:</strong> <span id="pdf-parser-install-pros"></span></div>
-            <div style="flex: 1;"><strong style="color: var(--text-muted);">단점:</strong> <span id="pdf-parser-install-cons"></span></div>
-          </div>
-        </div>
-
-        <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 20px; line-height: 1.5; display: flex; align-items: flex-start; gap: 6px;">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-top:2px;">
-            <circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>
-          </svg>
-          <span>설치는 현재 백엔드가 사용하는 가상환경(<code>.venv</code>)에 진행되며, 기존 환경을 훼손하지 않습니다.</span>
-        </div>
-
-        <div style="display: flex; justify-content: flex-end; gap: 10px;">
-          <button type="button" id="pdf-parser-install-cancel-btn" class="btn btn-secondary" style="padding: 8px 16px;">취소</button>
-          <button type="button" id="pdf-parser-install-confirm-btn" class="btn btn-primary" style="padding: 8px 18px; display: inline-flex; align-items: center; gap: 6px;">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <polyline points="7 10 12 15 17 10"/>
-              <line x1="12" y1="15" x2="12" y2="3"/>
-            </svg>
-            가상환경에 설치 및 적용
-          </button>
-        </div>
-      </div>
-
-      <!-- 진행 상황 (터미널 로그 스트리밍 & Progress Bar) -->
-      <div id="pdf-parser-install-progress-area" class="hidden">
-        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-          <span id="pdf-parser-install-status-text" style="font-size: 13px; font-weight: 500; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
-            <svg class="spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-            패키지 다운로드 및 설치 중...
-          </span>
-        </div>
-        <pre id="pdf-parser-install-log" style="width: 100%; height: 160px; background: #1e1e2e; color: #a6adc8; border-radius: var(--radius-md); padding: 12px; font-family: var(--font-mono); font-size: 11.5px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; margin: 0 0 16px 0; border: 1px solid var(--border);"></pre>
-        <div style="display: flex; justify-content: flex-end;">
-          <button type="button" id="pdf-parser-install-done-btn" class="btn btn-primary hidden" style="padding: 8px 18px;">확인</button>
-        </div>
-      </div>
-    </div>
-  </div>
 
   <script type="module" src="/src/main.js"></script>
 </body>

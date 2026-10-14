@@ -16,7 +16,7 @@
         "fullscreen": false,
         "theme": "Dark",
         "backgroundColor": "#06050a",
-        "dragDropEnabled": false
+        "dragDropEnabled": true
       }
     ],
     "security": {

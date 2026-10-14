@@ -106,3 +106,26 @@ test('Focus 설정은 모드별로 독립 저장되고 허용 범위로 정규�
   assert.equal(getModeSetting('focusDimOpacity', 'research', storage), 25)
   assert.equal(getModeSetting('focusScale', 'general', storage), 100)
 })
+
+test('한쪽 모드에서만 테마가 설정된 경우 다른 모드도 그 테마를 상속한다', () => {
+  const storage = memoryStorage()
+  setModeSetting('theme', 'research', 'light', storage)
+
+  assert.equal(getModeSetting('theme', 'research', storage), 'light')
+  assert.equal(getModeSetting('theme', 'general', storage), 'light')
+})
+
+test('일반 모드에서 테마를 설정해도 연구 모드가 상속한다', () => {
+  const storage = memoryStorage()
+  setModeSetting('theme', 'general', 'light', storage)
+
+  assert.equal(getModeSetting('theme', 'general', storage), 'light')
+  assert.equal(getModeSetting('theme', 'research', storage), 'light')
+})
+
+test('전역 theme 키가 설정되어 있으면 두 모드 모두 상속한다', () => {
+  const storage = memoryStorage({ theme: 'light' })
+
+  assert.equal(getModeSetting('theme', 'research', storage), 'light')
+  assert.equal(getModeSetting('theme', 'general', storage), 'light')
+})

@@ -7,10 +7,17 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 
 const INDENT_MARK = String.fromCharCode(0xE000)
+const NUMBERED_DISPLAY_MATH_RE = /\\tag\*?\s*\{/i
 
 function escapeHtml(str) {
   if (str === null || str === undefined) return ''
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+function displayMathWrapperClass(formula) {
+  return NUMBERED_DISPLAY_MATH_RE.test(String(formula || ''))
+    ? 'katex-display-wrap katex-display-numbered'
+    : 'katex-display-wrap'
 }
 
 
@@ -79,7 +86,7 @@ export function formatMarkdownLatexHtml(text, options = {}) {
           output: 'htmlAndMathml',
         })
         const tag = item.display ? 'div' : 'span'
-        const className = item.display ? 'katex-display-wrap' : 'katex-inline-wrap'
+        const className = item.display ? displayMathWrapperClass(item.formula) : 'katex-inline-wrap'
         return `<${tag} class="${className}" data-formula="${encodedFormula}" data-display="${item.display}">${rendered}</${tag}>`
       } catch {
         return `<code class="math-error" data-formula="${encodedFormula}" data-display="${item.display}">${escapeHtml(item.formula)}</code>`
@@ -152,6 +159,10 @@ export function formatTranslationHtml(text) {
     return `<span class="trans-page-link-badge" data-page-link="${pageNum}">${match}</span>`
   })
 
+  // 6.6. 첨자 (윗첨자 <sup>, 아래첨자 <sub>)
+  html = html.replace(/&lt;sup(?:\s.*?)?&gt;([\s\S]*?)&lt;\/sup&gt;/gi, '<sup>$1</sup>')
+  html = html.replace(/&lt;sub(?:\s.*?)?&gt;([\s\S]*?)&lt;\/sub&gt;/gi, '<sub>$1</sub>')
+
   // 7. 수식 플레이스홀더 복원
   html = html.replace(/::MATH_FLT_PLACEHOLDER_(\d+)::/g, (_, idStr) => {
     const item = mathBlocks[parseInt(idStr)]
@@ -160,7 +171,7 @@ export function formatTranslationHtml(text) {
       try {
         const r = window.katex.renderToString(item.formula, { displayMode: item.display, throwOnError: false, output: 'htmlAndMathml' })
         if (item.display) {
-          return `<div class="katex-display-wrap" data-formula="${encodeURIComponent(item.formula)}" data-display="true">${r}</div>`
+          return `<div class="${displayMathWrapperClass(item.formula)}" data-formula="${encodeURIComponent(item.formula)}" data-display="true">${r}</div>`
         } else {
           return `<span class="katex-inline-wrap" data-formula="${encodeURIComponent(item.formula)}" data-display="false">${r}</span>`
         }
@@ -185,7 +196,7 @@ export function applyKatexToElement(el) {
       const display = code.dataset.display === 'true'
       const r = window.katex.renderToString(formula, { displayMode: display, throwOnError: false, output: 'htmlAndMathml' })
       const wrapper = display
-        ? Object.assign(document.createElement('div'), { className: 'katex-display-wrap', innerHTML: r })
+        ? Object.assign(document.createElement('div'), { className: displayMathWrapperClass(formula), innerHTML: r })
         : Object.assign(document.createElement('span'), { className: 'katex-inline-wrap', innerHTML: r })
       wrapper.dataset.formula = encodeURIComponent(formula)
       wrapper.dataset.display = display.toString()

@@ -28,11 +28,17 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 /// kill하기 위해 앱 상태로 보관한다(고아 프로세스 방지, 계획 Phase 3).
 struct SidecarState(Mutex<Option<Child>>);
 
-/// 선호 포트(8000)를 우선 시도하고, 이미 사용 중이면(기존 웹 배포판이 로컬에
-/// 동시 실행 중인 경우 등) OS가 골라주는 임시 포트로 폴백한다(계획 Phase 2).
+/// 선호 포트(8008)를 우선 시도하고, 이미 사용 중이면 인접한 포트 범위(8009..=8030)를
+/// 순차적으로 시도하여 WebKit LocalStorage origin이 가능한 한 고정되도록 한다.
+/// 그래도 비어있지 않으면 OS가 골라주는 임시 포트로 폴백한다.
 fn find_available_port(preferred: u16) -> u16 {
     if TcpListener::bind(("127.0.0.1", preferred)).is_ok() {
         return preferred;
+    }
+    for port in (preferred + 1)..=(preferred + 30) {
+        if TcpListener::bind(("127.0.0.1", port)).is_ok() {
+            return port;
+        }
     }
     let listener = TcpListener::bind(("127.0.0.1", 0)).expect("failed to bind ephemeral port");
     listener.local_addr().unwrap().port()
@@ -54,7 +60,7 @@ fn resolve_user_shell_path() -> Option<String> {
     }
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
     let mut child = Command::new(&shell)
-        .args(["-ilc", "echo -n \"__EASYPAPER_PATH__$PATH\""])
+        .args(["-ilc", "echo -n \"__HJPAPER_PATH__$PATH\""])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .stdin(Stdio::null())
@@ -77,7 +83,7 @@ fn resolve_user_shell_path() -> Option<String> {
     let _ = child.wait();
 
     let output = output?;
-    let marker = "__EASYPAPER_PATH__";
+    let marker = "__HJPAPER_PATH__";
     let idx = output.rfind(marker)?;
     let path = output[idx + marker.len()..].trim();
     if path.is_empty() {
@@ -124,11 +130,6 @@ fn wait_for_backend(port: u16, timeout: Duration) -> bool {
 /// 번들 리소스가 아직 복사되지 않으므로 컴파일 시점의 CARGO_MANIFEST_DIR
 /// 기준 src-tauri/binaries/를 그대로 사용한다.
 fn backend_binary_path(app: &tauri::AppHandle) -> PathBuf {
-    let exe_name = if cfg!(windows) {
-        "easypaper-backend.exe"
-    } else {
-        "easypaper-backend"
-    };
     let base = if cfg!(debug_assertions) {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries")
     } else {
@@ -137,7 +138,25 @@ fn backend_binary_path(app: &tauri::AppHandle) -> PathBuf {
             .unwrap_or_else(|e| die("백엔드 리소스 디렉토리를 찾을 수 없습니다", e))
             .join("binaries")
     };
-    base.join("easypaper-backend").join(exe_name)
+    let exe_name = if cfg!(windows) {
+        "hjpaper-backend.exe"
+    } else {
+        "hjpaper-backend"
+    };
+    let hj_path = base.join("hjpaper-backend").join(exe_name);
+    if hj_path.exists() {
+        return hj_path;
+    }
+    let fallback_exe = if cfg!(windows) {
+        "easypaper-backend.exe"
+    } else {
+        "easypaper-backend"
+    };
+    let easy_path = base.join("easypaper-backend").join(fallback_exe);
+    if easy_path.exists() {
+        return easy_path;
+    }
+    base.join("hjpaper-backend").join(exe_name)
 }
 
 fn kill_sidecar(state: &tauri::State<SidecarState>) {
@@ -169,13 +188,13 @@ fn kill_backend_sidecar(state: tauri::State<SidecarState>) {
 /// 끝났다. 최소한 stderr/로그에는 원인이 남도록 정리된 메시지를 남기고
 /// 명시적으로 종료한다(패닉 언와인딩의 백트레이스 잡음도 피한다).
 fn die(context: &str, err: impl std::fmt::Display) -> ! {
-    eprintln!("[EasyPaper] 치명적 오류: {context}: {err}");
+    eprintln!("[HJPaper] 치명적 오류: {context}: {err}");
     log::error!("fatal startup error - {context}: {err}");
     std::process::exit(1);
 }
 
 fn die_msg(context: &str) -> ! {
-    eprintln!("[EasyPaper] 치명적 오류: {context}");
+    eprintln!("[HJPaper] 치명적 오류: {context}");
     log::error!("fatal startup error - {context}");
     std::process::exit(1);
 }
@@ -184,7 +203,6 @@ fn die_msg(context: &str) -> ! {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .manage(SidecarState(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![kill_backend_sidecar])
@@ -220,12 +238,12 @@ pub fn run() {
                     die(&format!("앱 데이터 하위 디렉토리를 만들 수 없습니다 ({dir:?})"), e);
                 }
             }
-            let db_path = app_data_dir.join("easypaper.db");
+            let db_path = app_data_dir.join("hjpaper.db");
 
             let binary = backend_binary_path(&app_handle);
             // PyInstaller onedir 산출물은 frontend/dist를 _internal/frontend/dist에
             // 담고 있다(빌드 산출물이 onedir 최상위 밖의 경로를 datas 목적지로
-            // 쓸 수 없어서). backend/main.py의 EASYPAPER_FRONTEND_DIST env var로
+            // 쓸 수 없어서). backend/main.py의 HJPAPER_FRONTEND_DIST env var로
             // 실제 위치를 알려준다.
             let frontend_dist = binary
                 .parent()
@@ -237,13 +255,17 @@ pub fn run() {
             let mut command = Command::new(&binary);
             command
                 .env("APP_HOST", "127.0.0.1")
+                .env("HJPAPER_CONFIG_DIR", &app_data_dir)
                 .env("EASYPAPER_CONFIG_DIR", &app_data_dir)
+                .env("HJPAPER_DESKTOP", "1")
                 .env("EASYPAPER_DESKTOP", "1")
                 .env("DB_PATH", &db_path)
                 .env("UPLOAD_DIR", &uploads_dir)
                 .env("CACHE_DIR", &cache_dir)
                 .env("LIBRARY_DIR", &library_dir)
+                .env("HJPAPER_LOG_DIR", &logs_dir)
                 .env("EASYPAPER_LOG_DIR", &logs_dir)
+                .env("HJPAPER_FRONTEND_DIST", &frontend_dist)
                 .env("EASYPAPER_FRONTEND_DIST", &frontend_dist)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
@@ -271,7 +293,7 @@ pub fn run() {
             // 실제로 bind하는 시점 사이에는 항상 미세한 창이 남는다) - 실패하면
             // wait_for_backend()의 헬스체크 타임아웃으로 감지되어 아래에서
             // 에러 로그로 남는다.
-            let port = find_available_port(8000);
+            let port = find_available_port(8008);
             command.env("APP_PORT", port.to_string());
             log::info!("spawning backend sidecar: {:?} on port {}", binary, port);
 
@@ -318,7 +340,7 @@ pub fn run() {
                 .get_webview_window("main")
                 .unwrap_or_else(|| die_msg("main 윈도우를 찾을 수 없습니다"));
             std::thread::spawn(move || {
-                if wait_for_backend(port, Duration::from_secs(15)) {
+                if wait_for_backend(port, Duration::from_secs(45)) {
                     let url = format!("http://127.0.0.1:{port}/");
                     log::info!("backend ready, navigating window to {}", url);
                     if let Err(e) = window.navigate(url.parse().expect("invalid url")) {

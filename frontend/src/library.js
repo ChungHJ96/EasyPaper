@@ -299,15 +299,6 @@ export async function fetchLibraryPdfLinks(docId) {
   return res.json()
 }
 
-export async function resolveLibraryReference(docId, refNum) {
-  const res = await fetch(`${API_BASE}/library/${docId}/references/${encodeURIComponent(refNum)}`)
-  if (!res.ok) {
-    if (res.status === 404) return null
-    throw new Error('참고문헌 링크 조회 실패')
-  }
-  return res.json()
-}
-
 export async function fetchLibraryGraph() {
   return fetchJsonWithSharedTtl(`${API_BASE}/library/graph`, '지식 그래프 조회 실패')
 }

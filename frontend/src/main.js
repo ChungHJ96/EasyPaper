@@ -12,9 +12,9 @@ import { parseStructuredVocabulary, renderStructuredVocabulary } from "./vocabul
 import { defaultDocumentType, loadDocumentTypeOptions, saveDocumentTypeOptions, CURRENT_ONBOARDING_VERSION, ONBOARDING_VERSION_KEY } from "./documentModes.js"
 import DOMPurify from 'dompurify'
 import { mountArticleViewer } from './articleViewer.js'
-import { uploadPDF, importURL, getArticleAPI, checkHealth, streamTranslation, getJobStatus, getPageTranslation, loginAPI, logoutAPI, checkAuthAPI, changeCredentialsAPI, getSkipLoginAPI, setSkipLoginAPI, getSystemSettingsAPI, saveSystemSettingsAPI, restartJobAPI, streamPullModelAPI, deleteModelAPI, streamChatAPI, clearTranslationCacheAPI, clearPagesCacheAPI, clearSingleDocCacheAPI, getChatHistoryAPI, cancelJobAPI, triggerSystemUpdateAPI, checkForUpdateAPI, streamPageInsightAPI, getOllamaStatusAPI, streamInstallOllamaAPI, fetchCliAvailability, getUpdateCheckConfigAPI, setUpdateCheckConfigAPI, getPostUpdateNoticeAPI, streamCompareChatAPI, getCompareChatHistoryAPI, getFullChangelogAPI, getChatSessionsAPI, getCompareChatSessionsAPI, getSuggestedQuestionsAPI, fetchPdfParsersInfoAPI, installPdfParserAPI, uninstallPdfParserAPI, fetchDocumentTypesAPI, getWorkspaceSettingsAPI, patchWorkspaceSettingsAPI, patchDocumentClassificationAPI, getDocumentClassificationAPI, confirmDocumentClassificationAPI, estimateInsightJobAPI, startInsightJobAPI, getInsightJobStatusAPI, cancelInsightJobAPI, getLanguagesAPI, getLanguageSettingsAPI, saveLanguageSettingsAPI, patchDocumentLanguagesAPI, patchDocumentProcessingPolicyAPI, retryDocumentTaskAPI, cancelDocumentTaskAPI, createReparsePreviewAPI, getReparsePreviewAPI, applyReparsePreviewAPI, getDocumentChaptersAPI, getChapterSummaryAPI, getFullSummaryEstimateAPI, startFullSummaryAPI, getFullSummaryStatusAPI } from './api.js'
+import { uploadPDF, importURL, getArticleAPI, checkHealth, streamTranslation, getJobStatus, getPageTranslation, loginAPI, logoutAPI, checkAuthAPI, changeCredentialsAPI, getSkipLoginAPI, setSkipLoginAPI, getSystemSettingsAPI, saveSystemSettingsAPI, restartJobAPI, streamPullModelAPI, deleteModelAPI, streamChatAPI, clearTranslationCacheAPI, clearPagesCacheAPI, clearSingleDocCacheAPI, getChatHistoryAPI, cancelJobAPI, triggerSystemUpdateAPI, checkForUpdateAPI, streamPageInsightAPI, getOllamaStatusAPI, streamInstallOllamaAPI, fetchCliAvailability, getUpdateCheckConfigAPI, setUpdateCheckConfigAPI, getPostUpdateNoticeAPI, streamCompareChatAPI, getCompareChatHistoryAPI, getFullChangelogAPI, getChatSessionsAPI, getCompareChatSessionsAPI, getSuggestedQuestionsAPI, fetchDocumentTypesAPI, getWorkspaceSettingsAPI, patchWorkspaceSettingsAPI, patchDocumentClassificationAPI, getDocumentClassificationAPI, confirmDocumentClassificationAPI, estimateInsightJobAPI, startInsightJobAPI, getInsightJobStatusAPI, cancelInsightJobAPI, getLanguagesAPI, getLanguageSettingsAPI, saveLanguageSettingsAPI, patchDocumentLanguagesAPI, patchDocumentProcessingPolicyAPI, retryDocumentTaskAPI, cancelDocumentTaskAPI, createReparsePreviewAPI, getReparsePreviewAPI, applyReparsePreviewAPI, getDocumentChaptersAPI, getChapterSummaryAPI, getFullSummaryEstimateAPI, startFullSummaryAPI, getFullSummaryStatusAPI } from './api.js'
 import { refreshTextLayerGeometry, loadPDF, renderScrollView, scrollToPage, reRenderAll, getScale, getTotalPages, getPDFOutline, renderFigureCrop, getPDFPageText, clearPageTextCache } from './pdfViewer.js'
-import { fetchLibrary, fetchLibraryDoc, fetchLibraryFolders, createLibraryFolder, updateLibraryFolder, deleteLibraryFolder, moveLibraryDocuments, deleteLibraryDoc, fetchLibraryTranslation, fetchLibraryDocImages, updateLibraryDocMetadata, updateLibraryDocTitle, updateLibraryTranslation, fetchLibraryTrash, restoreLibraryDoc, emptyLibraryTrash, deleteLibraryDocPermanently, searchLibrary, exportAnnotatedPdf, fetchLibraryReferences, resolveLibraryReference, fetchPrimer, regeneratePrimer, fetchLibraryBibliography, fetchLibraryGraph, fetchGraphNodeQuestions, searchGraphNodes, fetchReadingRecommendations, fetchCachedReadingRecommendations, fetchLibraryHeatmapMatrix, sendReadingHeartbeat, fetchPaperTagOntology, updatePaperTags, reclassifyPaperTags } from './library.js'
+import { fetchLibrary, fetchLibraryDoc, fetchLibraryFolders, createLibraryFolder, updateLibraryFolder, deleteLibraryFolder, moveLibraryDocuments, deleteLibraryDoc, fetchLibraryTranslation, fetchLibraryDocImages, updateLibraryDocMetadata, updateLibraryDocTitle, updateLibraryTranslation, fetchLibraryTrash, restoreLibraryDoc, emptyLibraryTrash, deleteLibraryDocPermanently, searchLibrary, exportAnnotatedPdf, fetchLibraryReferences, fetchLibraryPdfLinks, fetchPrimer, regeneratePrimer, fetchLibraryBibliography, fetchLibraryGraph, fetchGraphNodeQuestions, searchGraphNodes, fetchReadingRecommendations, fetchCachedReadingRecommendations, fetchLibraryHeatmapMatrix, sendReadingHeartbeat, fetchPaperTagOntology, updatePaperTags, reclassifyPaperTags } from './library.js'
 import { ensureLocalResourceIds, hasPendingAnnotationSync, recordLocalResourceChange, syncDocumentAnnotations } from './annotationSync.js'
 import { icon } from './icons.js'
 import { formatTranslationHtml, applyKatexToElement, linkPageCitations } from './textFormat.js'
@@ -30,16 +30,15 @@ import { canRetryTranslationTask, isTranslationTaskRunning, shouldRetryFailedTra
 import { applyUiScale, loadUiScale, saveUiScale, syncSelectValue, syncUiScaleControl } from './uiScale.js'
 import { adaptiveBriefingSummary, hasAdaptiveBriefing, renderAdaptiveBriefingHtml } from './adaptiveBriefing.js'
 import { classificationModalMarkup, recommendedClassification } from './classificationConfirmationView.js'
+import { alignSentencesToText } from './sentenceAlignment.js'
 import { renderChapterSummaryHtml, renderFullSummaryHtml } from './chapterSummaryView.js'
+import { formatDocumentDisplayTitle } from './documentTitle.js'
+import { embeddedReferenceKeys, embeddedReferenceMap, normalizeDiacritics } from './pdfReferenceKeys.js'
+import { createJumpHistory, pushJumpHistory, popJumpHistory, peekJumpHistory, canJumpBack, getShortcutLabel, shouldIgnoreKeyboardShortcut, isJumpBackKeyboardEvent, shouldRecordJump } from './jumpNavigation.js'
+import { extractDroppedLink } from './dropImport.js'
 
 const i18nReady = initI18n()
 applyUiScale(loadUiScale())
-
-if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
-  import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {
-    getCurrentWindow().setTitle('HJPaper')
-  }).catch(() => {})
-}
 
 
 // ── 글로벌 API 인터셉터 (인증 만료/실패 대응) ─────────
@@ -96,6 +95,7 @@ const state = {
   quotedText: null,            // AI 질문 시 인용구 보관용
   documentImages: [],          // 문서 내 이미지 좌표 목록
   referenceMap: {},            // 참고문헌 번호 -> 원문 텍스트 맵
+  pdfInternalLinks: {},        // PDF 내에 임베딩된 내부/외부 하이퍼링크 목록 (pageNum -> links)
   citationStyle: null,         // 'number' | 'author-year' | 'mixed' | null(미감지) - detectCitationStyle 결과
   referencesHeaderPageNum: null, // References/참고문헌 섹션이 시작되는 페이지 번호(감지 전엔 null)
   quotedImage: null,           // AI 질문 시 인용 이미지 보관용 (Base64)
@@ -1196,6 +1196,7 @@ function resetState() {
     zoom: 1.5, translationCache: {}, translationSentences: {}, translatingPages: new Set(), translatedPages: new Set(), pollingTimer: null,
     chatHistory: [], chatActiveStream: null, quotedText: null, quotedImage: null, quotedImagePage: null,
     activeHighlightColor: '#eab308', activeUnderlineColor: '#ef4444', isCropMode: false, documentImages: [], referenceMap: {},
+    pdfInternalLinks: {},
     citationStyle: null, referencesHeaderPageNum: null
   })
   if (typeof toggleCropMode === 'function') toggleCropMode(false)
@@ -1208,53 +1209,38 @@ function resetState() {
   if (chatToggleBtn) chatToggleBtn.classList.remove('active')
   hideOutlineSidebar()
   closeViewerFindBar()
+  clearJumpHistory()
   resetChatUI()
 }
 
 // ── 드래그 앤 드롭 ────────────────────────────────
 // libraryScreen에 직접 드래그 앤 드롭 이벤트 바인딩
-function extractDroppedLink(dataTransfer) {
-  if (!dataTransfer) return ''
-  const uriList = dataTransfer.getData('text/uri-list') || ''
-  const text = dataTransfer.getData('text/plain') || ''
-  const html = dataTransfer.getData('text/html') || ''
-
-  let link = ''
-  if (uriList) {
-    link = uriList.split(/[\r\n]+/).map(s => s.trim()).find(s => s && !s.startsWith('#')) || ''
-  }
-  if (!link && text) {
-    link = text.split(/[\r\n]+/)[0].trim()
-  }
-  if (!link && html) {
-    const match = html.match(/href=["']([^"']+)["']/i)
-    if (match) link = match[1].trim()
-  }
-
-  if (link) {
-    const isCandidate = (
-      link.startsWith('zotero://') ||
-      link.startsWith('file://') ||
-      link.startsWith('/') ||
-      /^https?:\/\//i.test(link) ||
-      link.includes('zotero.org')
-    )
-    if (isCandidate) return link
-  }
-  return ''
-}
-
 if (libraryScreen) {
+  let browserDragDepth = 0
+  const clearLibraryDragState = () => {
+    browserDragDepth = 0
+    libraryScreen.classList.remove('drag-over')
+  }
+  libraryScreen.addEventListener('dragenter', (e) => {
+    e.preventDefault()
+    browserDragDepth += 1
+    libraryScreen.classList.add('drag-over')
+  })
   libraryScreen.addEventListener('dragover', (e) => { e.preventDefault(); libraryScreen.classList.add('drag-over') })
-  libraryScreen.addEventListener('dragleave', () => libraryScreen.classList.remove('drag-over'))
+  libraryScreen.addEventListener('dragleave', (e) => {
+    // 자식 요소 사이를 오갈 때도 dragleave가 발생하므로, 화면 바깥으로
+    // 실제로 나간 경우에만 표시를 끈다.
+    browserDragDepth = Math.max(0, browserDragDepth - 1)
+    if (browserDragDepth === 0) libraryScreen.classList.remove('drag-over')
+  })
   libraryScreen.addEventListener('drop', async (e) => {
-    e.preventDefault(); libraryScreen.classList.remove('drag-over')
+    e.preventDefault(); clearLibraryDragState()
     // 1. 일반 OS 파일 드롭
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       beginClassifiedUpload(e.dataTransfer.files, activeLibraryFolderId)
       return
     }
-    // 2. Zotero, Zotmoov, 브라우저 링크/URI 드롭
+    // 2. Zotero, Finder/Explorer, 브라우저 링크/URI 드롭
     const link = extractDroppedLink(e.dataTransfer)
     if (link) {
       await beginClassifiedLinkImport(link, activeLibraryFolderId)
@@ -1262,6 +1248,7 @@ if (libraryScreen) {
     }
     showToast(t('library:import.unsupportedDrop'), 'warning')
   })
+  window.addEventListener('dragend', clearLibraryDragState)
 }
 fileInput.addEventListener('change', (e) => {
   if (e.target.files && e.target.files.length > 0) {
@@ -1547,6 +1534,8 @@ async function handleFiles(uploadItems, targetFolderId = null) {
       const title = result.metadata?.title || result.filename
       state.sessionId = result.session_id
       loadDocumentImages(result.session_id)
+      loadDocumentReferences(result.session_id)
+      loadDocumentPdfLinks(result.session_id)
       state.filename = result.filename
       state.totalPages = result.total_pages
       state.title = title
@@ -2064,8 +2053,8 @@ function enrichTranslationInteractiveReferences(container, pageNum) {
   const sentences = container.querySelectorAll('.trans-sentence')
   if (!sentences.length) return
 
-  // 결합 매칭 정규식 (그림/표 또는 번호/저자-연도 인용구)
-  const COMBINED_RE = /(\[?(?:그림|도|표|Figure|Fig\.|Table)\s*([0-9IVXLCDM]+|[A-Z])\]?)|(\[(\d+(?:\s*[-–—,]\s*\d+)*)\]|\(([A-Z][a-zA-Z\s.,&]+?\b\d{4}[a-z]?)\))/gi
+  // 결합 매칭 정규식 (그림/표/수식 또는 번호/저자-연도 인용구)
+  const COMBINED_RE = /(\[?(?:그림|도|표|수식|Figures?|Figs?\.?|Tables?|Tabs?\.?|Equations?|Eqs?\.?)\s*([S]?(?:\d+(?:\.\d+)*|[IVXLCDM]+)[A-Za-z]?(?:\s*(?:[-–—,]|및|and|&)\s*[S]?(?:\d+(?:\.\d+)*|[IVXLCDM]+)[A-Za-z]?)*)\]?)|(\[(\d+(?:\s*[-–—,]\s*\d+)*)\]|\(([A-ZÀ-ÖØ-Þ\u0100-\u024F\u1E00-\u1EFF][A-Za-zÀ-ÖØ-öø-ÿ\u0100-\u024F\u1E00-\u1EFF\s.,&]+?\b\d{4}[a-z]?)\))/gi
 
   sentences.forEach(sentEl => {
     const walker = document.createTreeWalker(sentEl, NodeFilter.SHOW_TEXT, {
@@ -2085,7 +2074,7 @@ function enrichTranslationInteractiveReferences(container, pageNum) {
     }
 
     textNodes.forEach(node => {
-      const text = node.nodeValue
+      const text = normalizeDiacritics(node.nodeValue)
       COMBINED_RE.lastIndex = 0
       if (!COMBINED_RE.test(text)) return
       COMBINED_RE.lastIndex = 0
@@ -2112,10 +2101,12 @@ function enrichTranslationInteractiveReferences(container, pageNum) {
         if (figTableNum) {
           span.dataset.refType = 'figure'
           const lower = fullMatch.toLowerCase()
-          const kind = (/[\uD45C]|table/i.test(lower)) ? 'Table' : 'Figure'
+          let kind = 'Figure'
+          if (/[\uD45C]|table|tab/i.test(lower)) kind = 'Table'
+          else if (/수식|eq/i.test(lower)) kind = 'Equation'
           span.dataset.kind = kind
           span.dataset.num = figTableNum
-          span.title = `${kind} ${figTableNum} 미리보기`
+          span.title = `${kind} ${figTableNum} 미리보기 및 이동`
         } else if (citBracketNum || citAuthorYear) {
           span.dataset.refType = 'citation'
           span.dataset.refKey = citBracketNum || citAuthorYear
@@ -2314,6 +2305,168 @@ if (scrollPageDownBtn) {
     scrollToPage(viewerScrollContainer, target)
   })
 }
+
+// ── 이전 읽던 위치로 복귀 (Jump Back Navigation) ────────────────────────
+const viewerJumpBackPill = $('viewer-jump-back-pill')
+const jumpBackActionBtn  = $('jump-back-action-btn')
+const jumpBackLabel      = $('jump-back-label')
+const jumpBackShortcut   = $('jump-back-shortcut')
+const jumpBackDismissBtn = $('jump-back-dismiss-btn')
+const scrollJumpBackBtn  = $('scroll-jump-back-btn')
+
+const jumpHistory = createJumpHistory()
+let jumpBackPillTimer = null
+
+function updateJumpBackUI() {
+  if (!viewerJumpBackPill || !scrollJumpBackBtn) return
+
+  if (!canJumpBack(jumpHistory)) {
+    viewerJumpBackPill.classList.add('hidden')
+    viewerJumpBackPill.classList.remove('fade-out')
+    scrollJumpBackBtn.classList.add('hidden')
+    if (jumpBackPillTimer) {
+      clearTimeout(jumpBackPillTimer)
+      jumpBackPillTimer = null
+    }
+    return
+  }
+
+  const lastEntry = peekJumpHistory(jumpHistory)
+  const shortcutText = getShortcutLabel(navigator.platform || navigator.userAgent || '')
+
+  if (jumpBackLabel) {
+    jumpBackLabel.textContent = t('viewer:navigation.jumpBack', { page: lastEntry.page })
+  }
+  if (jumpBackShortcut) {
+    jumpBackShortcut.textContent = shortcutText
+  }
+
+  const ariaText = t('viewer:navigation.jumpBackAria', { page: lastEntry.page })
+  const shortText = t('viewer:navigation.jumpBackShort', { page: lastEntry.page })
+
+  if (jumpBackActionBtn) {
+    jumpBackActionBtn.setAttribute('aria-label', `${ariaText} (${shortcutText})`)
+    jumpBackActionBtn.setAttribute('title', `${shortText} (${shortcutText})`)
+  }
+  if (scrollJumpBackBtn) {
+    scrollJumpBackBtn.classList.remove('hidden')
+    scrollJumpBackBtn.setAttribute('title', `${ariaText} (${shortcutText})`)
+    scrollJumpBackBtn.setAttribute('aria-label', `${ariaText} (${shortcutText})`)
+  }
+
+  viewerJumpBackPill.classList.remove('hidden', 'fade-out')
+  if (jumpBackPillTimer) {
+    clearTimeout(jumpBackPillTimer)
+  }
+  jumpBackPillTimer = setTimeout(() => {
+    dismissJumpBackPill()
+  }, 15000)
+}
+
+function dismissJumpBackPill() {
+  if (jumpBackPillTimer) {
+    clearTimeout(jumpBackPillTimer)
+    jumpBackPillTimer = null
+  }
+  if (!viewerJumpBackPill || viewerJumpBackPill.classList.contains('hidden')) return
+  viewerJumpBackPill.classList.add('fade-out')
+  setTimeout(() => {
+    if (viewerJumpBackPill && viewerJumpBackPill.classList.contains('fade-out')) {
+      viewerJumpBackPill.classList.add('hidden')
+      viewerJumpBackPill.classList.remove('fade-out')
+    }
+  }, 300)
+}
+
+function recordJumpHistory(targetPage) {
+  if (!viewerScrollContainer) return
+  const currentPage = state.currentPage || 1
+  const currentScrollTop = viewerScrollContainer.scrollTop
+  const lastEntry = peekJumpHistory(jumpHistory)
+  if (!shouldRecordJump(currentPage, targetPage, currentScrollTop, lastEntry)) {
+    return
+  }
+  pushJumpHistory(jumpHistory, {
+    scrollTop: currentScrollTop,
+    page: currentPage,
+    timestamp: Date.now()
+  })
+  updateJumpBackUI()
+}
+
+function performJumpBack() {
+  if (!canJumpBack(jumpHistory) || !viewerScrollContainer) return
+
+  const targetPos = popJumpHistory(jumpHistory)
+  updateJumpBackUI()
+
+  viewerScrollContainer.scrollTo({
+    top: targetPos.scrollTop,
+    behavior: 'smooth'
+  })
+
+  setTimeout(() => {
+    const pageWrapper = viewerScrollContainer.querySelector(`.pdf-page-wrapper[data-page="${targetPos.page}"]`)
+    if (pageWrapper && typeof getOrCreateOverlay === 'function') {
+      const ov = getOrCreateOverlay(pageWrapper)
+      if (ov) {
+        const pulseBox = document.createElement('div')
+        pulseBox.className = 'sentence-pulse-box'
+        pulseBox.style.left = '4%'
+        pulseBox.style.width = '92%'
+        pulseBox.style.top = '10%'
+        pulseBox.style.height = '100px'
+        ov.appendChild(pulseBox)
+        setTimeout(() => pulseBox.remove(), 2000)
+      }
+    }
+  }, 350)
+}
+
+function clearJumpHistory() {
+  jumpHistory.length = 0
+  if (jumpBackPillTimer) {
+    clearTimeout(jumpBackPillTimer)
+    jumpBackPillTimer = null
+  }
+  if (viewerJumpBackPill) {
+    viewerJumpBackPill.classList.add('hidden')
+    viewerJumpBackPill.classList.remove('fade-out')
+  }
+  if (scrollJumpBackBtn) {
+    scrollJumpBackBtn.classList.add('hidden')
+  }
+}
+
+if (jumpBackActionBtn) {
+  jumpBackActionBtn.addEventListener('click', (e) => {
+    e.stopPropagation()
+    performJumpBack()
+  })
+}
+if (jumpBackDismissBtn) {
+  jumpBackDismissBtn.addEventListener('click', (e) => {
+    e.stopPropagation()
+    dismissJumpBackPill()
+  })
+}
+if (scrollJumpBackBtn) {
+  scrollJumpBackBtn.addEventListener('click', (e) => {
+    e.stopPropagation()
+    performJumpBack()
+  })
+}
+
+// Global keyboard shortcut: Alt+ArrowLeft or Cmd+[ / Ctrl+[ to jump back
+document.addEventListener('keydown', (e) => {
+  if (shouldIgnoreKeyboardShortcut(e.target)) return
+  if (!viewerScreen || !viewerScreen.classList.contains('active')) return
+  if (isJumpBackKeyboardEvent(e) && canJumpBack(jumpHistory)) {
+    e.preventDefault()
+    e.stopPropagation()
+    performJumpBack()
+  }
+})
 
 // ── 줌 ────────────────────────────────────────────
 // 클램핑 + 라벨 갱신만 즉시 수행하는 가벼운 버전. 핀치/휠 제스처처럼 짧은 시간에
@@ -2626,12 +2779,27 @@ if (viewerClearCacheBtn) {
       return
     }
     const currentDocTitle = $('doc-title')?.textContent || '현재 논문'
-    const ok = await showCustomConfirm(`"${currentDocTitle}"의 PDF 추출 캐시를 삭제할까요?\n(다음 열람 시 PDF를 다시 파싱하게 됩니다.)`, { title: 'PDF 캐시 삭제', confirmText: '캐시 삭제' })
+    const ok = await showCustomConfirm(
+      `"${currentDocTitle}"의 PDF 추출 및 번역 캐시를 삭제할까요?\n(기존 번역본이 초기화되며 다음 열람 시 PDF를 다시 파싱하게 됩니다.)`,
+      { title: 'PDF 캐시 삭제', confirmText: '캐시 삭제', danger: true }
+    )
     if (!ok) return
     try {
-      await clearSingleDocCacheAPI(state.sessionId)
+      const docId = state.sessionId
+      await clearTranslationCacheAPI(docId)
+      await clearSingleDocCacheAPI(docId)
       showToast(t('viewer:cacheClearedReload'), 'success')
-      setTimeout(() => window.location.reload(), 500)
+
+      // 전체 브라우저/웹뷰 강제 reload(window.location.reload)는 데스크탑(Tauri/WKWebView) 환경에서
+      // 백엔드 프로세스 단절, i18n 로딩 마스크 고착 및 흰 화면을 유발하므로
+      // SPA 라우팅 흐름 내에서 뷰어 상태를 초기화하고 문서를 안전하게 재로딩합니다.
+      const doc = await fetchLibraryDoc(docId)
+      if (doc) {
+        docOpeningId = null
+        await openFromLibrary(doc, false)
+      } else {
+        await showLibraryScreen()
+      }
     } catch (err) {
       showToast('캐시 삭제 실패: ' + err.message, 'error')
     }
@@ -3064,10 +3232,13 @@ async function checkAuthentication() {
     // 애초에 의미가 없으므로 건너뛴다(데스크탑 자체 업데이트는 Tauri updater가
     // 별도로 담당).
     if (!isTauriDesktop) {
-      // HJPaper: 웹/데스크탑 자동 업데이트 비활성화
+      checkPostUpdateNoticeOnce().then((shown) => {
+        if (!shown) maybeAutoCheckForUpdate()
+      })
     } else {
       loadTauriAppVersion()
-      // HJPaper: 데스크탑 자동 업데이트 비활성화
+      maybeCheckTauriUpdateIfDue()
+      startTauriUpdatePolling()
     }
   } else {
     showLogin()
@@ -3560,112 +3731,7 @@ const chatSidebarPicker = new ProviderModelPicker($('chat-sidebar-provider'), {
 const _PDF_DOC_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`
 const _TRASH_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`
 
-class PdfParserPicker {
-  constructor(containerEl, { onChange } = {}) {
-    if (!containerEl) return
-    this.container = containerEl
-    this.onChange = onChange || (() => {})
-    this._selectedId = 'pymupdf'
-    this._parsers = []
-    this._build()
-    this._bindClose()
-  }
 
-  _build() {
-    const c = this.container
-    c.className = 'provider-picker picker-left picker-full-wrap'
-
-    this._btn = document.createElement('button')
-    this._btn.type = 'button'
-    this._btn.className = 'provider-picker-btn picker-full'
-    this._btn.innerHTML = `<span class="picker-icon">${_PDF_DOC_SVG}</span><span class="picker-label">PyMuPDF (fitz) - [기본] (0 MB)</span><span class="picker-arrow">▾</span>`
-
-    this._panel = document.createElement('div')
-    this._panel.className = 'provider-picker-panel'
-
-    c.appendChild(this._btn)
-    c.appendChild(this._panel)
-
-    this._btn.addEventListener('click', (e) => {
-      e.stopPropagation()
-      const isOpen = c.classList.contains('open')
-      document.querySelectorAll('.provider-picker.open').forEach(p => p.classList.remove('open'))
-      if (!isOpen) {
-        this._rebuildPanel()
-        c.classList.add('open')
-      }
-    })
-  }
-
-  setParsersData(parsers, currentId) {
-    this._parsers = parsers || []
-    if (currentId) this._selectedId = currentId
-    this._updateBtn()
-  }
-
-  _rebuildPanel() {
-    this._panel.innerHTML = ''
-    const list = this._parsers.length > 0 ? this._parsers : Object.values(PARSER_FALLBACK_META)
-
-    const group = document.createElement('div')
-    group.className = 'picker-group'
-
-    const header = document.createElement('div')
-    header.className = 'picker-group-header'
-    header.innerHTML = `<span class="g-icon">${_PDF_DOC_SVG}</span><span>PDF 파서 엔진 목록</span>`
-    group.appendChild(header)
-
-    list.forEach(p => {
-      const item = document.createElement('div')
-      item.className = 'picker-model-item' + (this._selectedId === p.id ? ' selected' : '')
-
-      const badgeHtml = p.installed
-        ? `<span class="picker-available-chip" style="margin-left:auto;">설치됨</span>`
-        : `<span style="margin-left:auto;font-size:11px;color:var(--text-muted);">${p.size_info || '미설치'}</span>`
-
-      item.innerHTML = `<div style="display:flex;align-items:center;width:100%;gap:8px;"><span>${p.name}</span>${badgeHtml}</div>`
-
-      item.addEventListener('click', (e) => {
-        e.stopPropagation()
-        this._selectedId = p.id
-        this._updateBtn()
-        this.container.classList.remove('open')
-        this.onChange(p.id)
-      })
-      group.appendChild(item)
-    })
-
-    this._panel.appendChild(group)
-  }
-
-  _updateBtn() {
-    const p = (this._parsers && this._parsers.find(item => item.id === this._selectedId)) || PARSER_FALLBACK_META[this._selectedId] || PARSER_FALLBACK_META.pymupdf
-    const label = p ? `${p.name} - ${p.installed ? '[설치됨]' : `[미설치 - ${p.size_info}]`}` : this._selectedId
-    if (this._btn) {
-      this._btn.querySelector('.picker-icon').innerHTML = _PDF_DOC_SVG
-      this._btn.querySelector('.picker-label').textContent = label
-    }
-  }
-
-  _bindClose() {
-    document.addEventListener('click', (e) => {
-      if (!this.container.contains(e.target)) {
-        this.container.classList.remove('open')
-      }
-    })
-  }
-
-  getValue() {
-    return this._selectedId
-  }
-
-  setValue(val) {
-    if (val) {
-      this._selectedId = val
-      this._updateBtn()
-    }
-  }
-}
 
 const settingDefaultAiPicker = new ProviderModelPicker($('setting-default-ai-provider'), {
   compact: false,
@@ -3690,61 +3756,6 @@ const settingAnalysisPicker = new ProviderModelPicker($('setting-analysis-provid
 const settingLibraryPicker = new ProviderModelPicker($('setting-library-provider'), {
   compact: false,
   onChange: () => { updateSettingsUIVisibility(); autoSaveSystemSettings() }
-})
-
-// marker와 mineru는 상충하는 transformers 버전이 필요하다. 서버 배포는 venv,
-// Tauri 배포는 앱 데이터의 엔진별 패키지 폴더로 격리한다. Tauri에서는
-// 어떤 엔진 전환도 앱을 재실행해 선택 엔진의 의존성만 로드한다.
-let currentSavedPdfEngine = 'pymupdf'
-
-// autoSaveSystemSettings 결과에 restarting이 담겨 있으면(설정 저장 API가
-// 재시작이 트리거됐음을 알려준 것) 재시작 완료를 기다렸다가 새로고침한다.
-async function maybeHandlePdfEngineRestart(res) {
-  if (!res || !res.restarting) return false
-
-  showToast(res.message || 'PDF 파서 엔진 적용을 위해 재시작합니다...', 'info')
-  if (res.restart_mode === 'desktop_app' && isTauriDesktop) {
-    try {
-      // 앱 종료 이벤트에서 현재 sidecar를 정리한 뒤 새 프로세스를 시작한다.
-      const { relaunch } = await import('@tauri-apps/plugin-process')
-      await new Promise(resolve => setTimeout(resolve, 500))
-      await relaunch()
-      return true
-    } catch (err) {
-      showToast('앱 재시작 실패: ' + (err.message || err), 'error')
-      return false
-    }
-  }
-
-  await waitForServerRestartAndReload()
-  return true
-}
-
-const settingPdfParserPicker = new PdfParserPicker($('setting-pdf-parser-picker'), {
-  onChange: async (selectedId) => {
-    updateParserCardInfo(selectedId)
-    const parser = pdfParsersData.find(p => p.id === selectedId) || PARSER_FALLBACK_META[selectedId]
-    // 설치된 파서만 즉시 엔진 변경 저장. 미설치 파서는 카드의 [패키지 설치] 버튼을 눌러야 함.
-    if (parser && parser.installed) {
-      const needsRestartWarning = selectedId !== currentSavedPdfEngine &&
-        (isTauriDesktop || selectedId === 'mineru' || currentSavedPdfEngine === 'mineru')
-      if (needsRestartWarning) {
-        const ok = await showCustomConfirm(
-          `[${parser.name}](으)로 전환하면 ${isTauriDesktop ? '앱' : '서버'}이 재시작됩니다(약 3~5초 소요). 지금 진행 중인 번역이 있다면 중단될 수 있습니다. 계속할까요?`,
-          { title: 'PDF 파서 엔진 전환', confirmText: '전환 및 재시작', danger: true }
-        )
-        if (!ok) {
-          settingPdfParserPicker.setParsersData(pdfParsersData, currentSavedPdfEngine)
-          updateParserCardInfo(currentSavedPdfEngine)
-          return
-        }
-      }
-      const res = await autoSaveSystemSettings({ silent: needsRestartWarning })
-      currentSavedPdfEngine = selectedId
-      const restarting = await maybeHandlePdfEngineRestart(res)
-      if (!restarting) showToast(`PDF 파서 엔진이 [${parser.name}]로 설정되었습니다.`, 'success')
-    }
-  }
 })
 
 const modelSettingChildren = [
@@ -3949,7 +3960,6 @@ async function refreshSystemSettings() {
     updateSettingsUIVisibility()
     renderOllamaInstalledModels()
     updateRecommendModelButtons()
-    await refreshPdfParsersUI(sys.pdf_parser_engine || 'pymupdf')
 
   } catch (err) {
     console.warn('System settings load error:', err)
@@ -4069,204 +4079,6 @@ function updateRecommendModelButtons() {
 
 
 
-// ── PDF 파서 엔진 선택 및 동적 설치 UI 핸들러 ──────────────────
-let pdfParsersData = []
-let targetInstallParserId = null
-
-const PARSER_FALLBACK_META = {
-  opendataloader: { id: 'opendataloader', name: 'OpenDataLoader PDF (권장)', installed: true, size_info: '약 25 MB', description: '고정밀 다단 레이아웃·표·수식 분석 오픈소스 파서 (#1 벤치마크, CPU 전용).', pros: '벤치마크 1위 정확도(0.907), 수식 LaTeX 변환, 다단 및 표 추출 우수, GPU 불필요 (초고속)', cons: 'Java 11+ 런타임 필요' },
-  pymupdf: { id: 'pymupdf', name: 'PyMuPDF (fitz)', installed: true, size_info: '0 MB', description: '기본 제공 파서 - 텍스트 중심 문서에서 초고속으로 작동합니다.', pros: '초고속 (몇 ms 내 처리), 별도 설치 필요 없음', cons: '2단 복잡 구조, 수식 텍스트 엉킴 발생 가능' },
-  pdfplumber: { id: 'pdfplumber', name: 'pdfplumber', installed: false, size_info: '약 15 MB', description: 'Python 기반 파서 - 표(Table) 추출 및 텍스트 위치 정밀 추적에 강점.', pros: '표(Table) 파싱 우수, 정밀 좌표 추적', cons: '소폭 더 큼, 수식 OCR 미지정' },
-  marker: { id: 'marker', name: 'Marker (AI Markdown)', installed: false, size_info: '약 2.5 GB', description: '딥러닝 비전/레이아웃 AI - 논문 전체를 깨끗한 Markdown/LaTeX 수식으로 변환.', pros: '수식, 표, 2단 레이아웃 매우 정밀 분석', cons: '최초 모델 설치 시 대용량 다운로드 필요' },
-  mineru: { id: 'mineru', name: 'MinerU (Magic-PDF)', installed: false, size_info: '약 3.0 GB', description: 'OpenDataLab 학술 서적 및 복잡 레이아웃 전문 추출 파서.', pros: '복잡 서적, 수식, 다단 구조 추출 최강', cons: '최초 모델 설치 시 대용량 다운로드 필요' }
-}
-
-async function refreshPdfParsersUI(savedEngine) {
-  try {
-    const data = await fetchPdfParsersInfoAPI()
-    pdfParsersData = data.parsers || []
-    const currentEngine = savedEngine || data.current_engine || 'pymupdf'
-    currentSavedPdfEngine = currentEngine
-
-    if (typeof settingPdfParserPicker !== 'undefined' && settingPdfParserPicker) {
-      settingPdfParserPicker.setParsersData(pdfParsersData, currentEngine)
-    }
-
-    updateParserCardInfo(currentEngine)
-  } catch (err) {
-    console.warn('PDF 파서 목록 로드 실패:', err)
-    currentSavedPdfEngine = savedEngine || 'pymupdf'
-    if (typeof settingPdfParserPicker !== 'undefined' && settingPdfParserPicker) {
-      settingPdfParserPicker.setParsersData(Object.values(PARSER_FALLBACK_META), savedEngine || 'pymupdf')
-    }
-    updateParserCardInfo(savedEngine || 'pymupdf')
-  }
-}
-
-function clearParserInlineProgress() {
-  const inlineProgress = $('pdf-parser-inline-progress')
-  const inlineLog = $('pdf-parser-inline-log')
-  const inlineStatus = $('pdf-parser-inline-status')
-  if (inlineProgress) inlineProgress.classList.add('hidden')
-  if (inlineLog) inlineLog.textContent = ''
-  if (inlineStatus) inlineStatus.innerHTML = ''
-}
-
-function updateParserCardInfo(engineId) {
-  const cardName = $('pdf-parser-card-name')
-  const cardDesc = $('pdf-parser-card-desc')
-  const cardPros = $('pdf-parser-card-pros')
-  const cardCons = $('pdf-parser-card-cons')
-  const installRow = $('pdf-parser-install-row')
-  const installBtn = $('pdf-parser-install-btn')
-  const uninstallRow = $('pdf-parser-uninstall-row')
-  const uninstallBtn = $('pdf-parser-uninstall-btn')
-
-  const parser = pdfParsersData.find(p => p.id === engineId) || PARSER_FALLBACK_META[engineId] || PARSER_FALLBACK_META.pymupdf
-  if (!parser) return
-
-  // 파서 변경 시 인라인 설치 로그 초기화
-  clearParserInlineProgress()
-
-  if (cardName) cardName.textContent = `${parser.name} ${parser.installed ? '(설치됨)' : `(${parser.size_info})`}`
-  if (cardDesc) cardDesc.textContent = parser.description
-  if (cardPros) cardPros.textContent = parser.pros
-  if (cardCons) cardCons.textContent = parser.cons
-
-  // 설치 버튼: pymupdf 제외, 미설치인 경우만 표시
-  if (installRow) {
-    if (parser.id !== 'pymupdf' && !parser.installed) {
-      installRow.classList.remove('hidden')
-    } else {
-      installRow.classList.add('hidden')
-    }
-  }
-
-  if (installBtn) {
-    const newInstallBtn = installBtn.cloneNode(true)
-    installBtn.parentNode.replaceChild(newInstallBtn, installBtn)
-    newInstallBtn.addEventListener('click', () => {
-      targetInstallParserId = parser.id
-      openPdfParserInstallModal(parser)
-    })
-  }
-
-  // 삭제 버튼: pymupdf 제외, 설치된 경우만 표시
-  if (uninstallRow) {
-    if (parser.id !== 'pymupdf' && parser.installed) {
-      uninstallRow.classList.remove('hidden')
-    } else {
-      uninstallRow.classList.add('hidden')
-    }
-  }
-
-  // 삭제 버튼 클릭 이벤트 연결 (매번 바인드 방지용 클론)
-  if (uninstallBtn) {
-    const newBtn = uninstallBtn.cloneNode(true)
-    uninstallBtn.parentNode.replaceChild(newBtn, uninstallBtn)
-    newBtn.addEventListener('click', async () => {
-      const ok = await showCustomConfirm(`[${parser.name}] 파서 패키지를 가상환경(.venv)에서 삭제하시겠습니까?`, {
-        title: '파서 패키지 삭제', confirmText: '삭제', danger: true
-      })
-      if (!ok) return
-      try {
-        showToast(`[${parser.name}] 패키지 삭제 진행 중...`, 'info')
-        await uninstallPdfParserAPI(parser.id)
-        showToast(`[${parser.name}] 패키지 삭제가 완료되었습니다.`, 'success')
-        clearParserInlineProgress()
-        await refreshSystemSettings()
-      } catch (err) {
-        showToast(`삭제 실패: ${err.message}`, 'error')
-      }
-    })
-  }
-}
-
-function openPdfParserInstallModal(parser) {
-  const modal = $('pdf-parser-install-modal')
-  const introArea = $('pdf-parser-install-intro')
-  const progressArea = $('pdf-parser-install-progress-area')
-  const statusText = $('pdf-parser-install-status-text')
-  const logElem = $('pdf-parser-install-log')
-  const doneBtn = $('pdf-parser-install-done-btn')
-
-  // 설정 카드 내부 인라인 엘리먼트
-  const inlineProgressArea = $('pdf-parser-inline-progress')
-  const inlineStatusText = $('pdf-parser-inline-status')
-  const inlineLogElem = $('pdf-parser-inline-log')
-
-  if (introArea) introArea.classList.add('hidden')
-  if (progressArea) progressArea.classList.remove('hidden')
-  if (inlineProgressArea) inlineProgressArea.classList.remove('hidden')
-
-  if (logElem) logElem.textContent = ''
-  if (inlineLogElem) inlineLogElem.textContent = ''
-  if (doneBtn) doneBtn.classList.add('hidden')
-
-  const initialMsg = `<svg class="spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> 백엔드 가상환경에 [${parser.name}] 설치 진행 중...`
-  if (statusText) statusText.innerHTML = initialMsg
-  if (inlineStatusText) inlineStatusText.innerHTML = initialMsg
-
-  openOverlayModal(modal)
-
-  installPdfParserAPI(
-    parser.id,
-    (line) => {
-      if (logElem) {
-        logElem.textContent += line + '\n'
-        logElem.scrollTop = logElem.scrollHeight
-      }
-      if (inlineLogElem) {
-        inlineLogElem.textContent += line + '\n'
-        inlineLogElem.scrollTop = inlineLogElem.scrollHeight
-      }
-    },
-    async (successMsg) => {
-      const succMsg = `<span style="color: var(--accent-mid); font-weight:600;">✓ [${parser.name}] 설치가 성공적으로 완료되었습니다!</span>`
-      if (statusText) statusText.innerHTML = succMsg
-      if (inlineStatusText) inlineStatusText.innerHTML = succMsg
-      if (doneBtn) doneBtn.classList.remove('hidden')
-      const res = await autoSaveSystemSettings({ silent: true })
-      currentSavedPdfEngine = parser.id
-      const restarting = await maybeHandlePdfEngineRestart(res)
-      if (!restarting) await refreshSystemSettings()
-    },
-    async (err) => {
-      const errMsg = `<span style="color: var(--danger, #ef4444); font-weight:600;">✕ 설치 중 오류 발생: ${err.message}</span>`
-      if (statusText) statusText.innerHTML = errMsg
-      if (inlineStatusText) inlineStatusText.innerHTML = errMsg
-      if (doneBtn) doneBtn.classList.remove('hidden')
-      await refreshSystemSettings()
-    }
-  )
-}
-
-const parserInstallCancelBtn = $('pdf-parser-install-cancel-btn')
-const parserInstallCloseBtn = $('pdf-parser-install-close-btn')
-const parserInstallModal = $('pdf-parser-install-modal')
-const parserInstallDoneBtn = $('pdf-parser-install-done-btn')
-
-if (parserInstallCancelBtn) {
-  parserInstallCancelBtn.addEventListener('click', async () => {
-    closeOverlayModal(parserInstallModal)
-    await refreshSystemSettings()
-  })
-}
-
-if (parserInstallCloseBtn) {
-  parserInstallCloseBtn.addEventListener('click', async () => {
-    closeOverlayModal(parserInstallModal)
-    await refreshSystemSettings()
-  })
-}
-
-if (parserInstallDoneBtn) {
-  parserInstallDoneBtn.addEventListener('click', async () => {
-    closeOverlayModal(parserInstallModal)
-    await refreshSystemSettings()
-  })
-}
-
 // ── Provider + Model 통합 변경 헬퍼 ──────────────────
 async function changeProviderAndModel(type, newProvider, newModel) {
   try {
@@ -4296,7 +4108,7 @@ async function changeProviderAndModel(type, newProvider, newModel) {
       claude_api_key: '',
       openalex_mailto: sys.openalex_mailto || '',
       translation_prompt_template: sys.translation_prompt_template || '',
-      pdf_parser_engine: sys.pdf_parser_engine || 'pymupdf'
+      pdf_parser_engine: sys.pdf_parser_engine || 'mineru'
     }
     await saveSystemSettingsAPI(payload)
     // sync settings pickers
@@ -4319,7 +4131,7 @@ async function changeProviderAndModel(type, newProvider, newModel) {
   }
 }
 
-// ── HJPaper 설정 모달 이벤트 ──────────────────────────
+// ── EasyPaper 설정 모달 이벤트 ──────────────────────────
 globalSettingsBtn.addEventListener('click', async () => {
   await loadFeatureNamespaces('settings')
   syncUiScaleControl(settingUiScale)
@@ -4359,13 +4171,11 @@ globalSettingsBtn.addEventListener('click', async () => {
 })
 
 closeSettingsBtn.addEventListener('click', () => {
-  clearParserInlineProgress()
   closeOverlayModal(settingsModal)
 })
 
 settingsModal.addEventListener('click', (e) => {
   if (e.target === settingsModal) {
-    clearParserInlineProgress()
     closeOverlayModal(settingsModal)
   }
 })
@@ -4718,8 +4528,6 @@ async function autoSaveSystemSettings({ silent = false } = {}) {
     libraryModel = defaultModel
   }
 
-  const pdfParserEngine = (typeof settingPdfParserPicker !== 'undefined' && settingPdfParserPicker) ? settingPdfParserPicker.getValue() : 'pymupdf'
-
   const settings = {
     ollama_host: settingOllamaHost ? settingOllamaHost.value.trim() : '',
     default_ai_provider: defaultProvider || 'antigravity',
@@ -4740,7 +4548,7 @@ async function autoSaveSystemSettings({ silent = false } = {}) {
     delete_claude_api_key: settingClaudeKey?.dataset.deleteRequested === 'true',
     openalex_mailto: settingOpenAlexMailto ? settingOpenAlexMailto.value.trim() : '',
     translation_prompt_template: $('setting-prompt-template') ? $('setting-prompt-template').value : '',
-    pdf_parser_engine: pdfParserEngine
+    pdf_parser_engine: 'mineru'
   }
 
   try {
@@ -4823,6 +4631,42 @@ if (isTauriDesktop && systemUpdateSection) {
   systemUpdateSection.classList.add('hidden')
 }
 
+// macOS의 Zotero는 PDF 첨부파일을 끌어올 때, WebKit의 일반 HTML5 `drop`
+// 이벤트에는 링크/파일을 넘기지 않고 Tauri의 네이티브 파일 드롭 이벤트로만
+// 경로를 보낼 수 있다. 이 경로를 처리하지 않으면 화면에는 점선만 남고
+// 가져오기 대화상자가 열리지 않는다.
+function initNativeLibraryDropImport() {
+  if (!isTauriDesktop || !libraryScreen) return
+
+  import('@tauri-apps/api/webview').then(({ getCurrentWebview }) => {
+    getCurrentWebview().onDragDropEvent(async ({ payload }) => {
+      if (!libraryScreen.classList.contains('active')) return
+
+      if (payload.type === 'enter' || payload.type === 'over') {
+        libraryScreen.classList.add('drag-over')
+        return
+      }
+      libraryScreen.classList.remove('drag-over')
+      if (payload.type !== 'drop') return
+
+      const pdfPaths = payload.paths.filter(path => /\.pdf$/i.test(path))
+      if (pdfPaths.length === 0) {
+        showToast(t('library:import.unsupportedDrop'), 'warning')
+        return
+      }
+
+      // 네이티브 이벤트의 path는 이미 Zotero가 가리키는 실제 첨부파일 경로다.
+      // beginClassifiedLinkImport는 파일을 직접 열지 않고 백엔드에 복사를
+      // 요청하므로, 브라우저 보안상 File 객체를 만들 수 없는 Tauri에서도 안전하다.
+      for (const path of pdfPaths) {
+        await beginClassifiedLinkImport(path, activeLibraryFolderId)
+      }
+    }).catch(error => console.warn('Native file drop listener could not start:', error))
+  }).catch(error => console.warn('Could not load Tauri file drop API:', error))
+}
+
+initNativeLibraryDropImport()
+
 // ── 데스크탑(Tauri) 자체 업데이트: tauri-plugin-updater를 프론트에서 직접 호출한다.
 // 기존에는 Rust 쪽 setup()에서 check()만 호출하고 결과를 로그에 남기는 게
 // 전부라, 새 버전이 있어도 사용자에게 전달되거나 실제로 설치되는 경로가
@@ -4876,16 +4720,22 @@ const TAURI_UPDATE_DUE_CHECK_TICK_MS = 60 * 60 * 1000 // 1시간
 let tauriUpdatePollingTimer = null
 
 async function maybeCheckTauriUpdateIfDue() {
-  // HJPaper: 데스크탑 자동 업데이트 비활성화
-  return
+  const interval = getTauriUpdateCheckInterval()
+  if (interval === 'never') return
+  const intervalMs = UPDATE_CHECK_INTERVAL_MS[interval] || UPDATE_CHECK_INTERVAL_MS.weekly
+  const lastCheckedAt = Number(localStorage.getItem(TAURI_UPDATE_LAST_CHECKED_STORAGE_KEY) || 0)
+  const dueNow = !lastCheckedAt || (Date.now() - lastCheckedAt) >= intervalMs
+  if (!dueNow) return
+  await checkTauriUpdate({ silent: true })
 }
 
 function startTauriUpdatePolling() {
   if (tauriUpdatePollingTimer) clearInterval(tauriUpdatePollingTimer)
+  tauriUpdatePollingTimer = setInterval(maybeCheckTauriUpdateIfDue, TAURI_UPDATE_DUE_CHECK_TICK_MS)
 }
 
 if (isTauriDesktop && tauriUpdateSection) {
-  tauriUpdateSection.classList.add('hidden')
+  tauriUpdateSection.classList.remove('hidden')
 }
 
 async function loadTauriAppVersion() {
@@ -4910,10 +4760,58 @@ function resetTauriUpdateState() {
 
 async function checkTauriUpdate({ silent = false } = {}) {
   if (!isTauriDesktop) return
+  localStorage.setItem(TAURI_UPDATE_LAST_CHECKED_STORAGE_KEY, String(Date.now()))
   resetTauriUpdateState()
+  if (!silent && tauriUpdateCheckBtn) {
+    tauriUpdateCheckBtn.disabled = true
+    tauriUpdateCheckBtn.innerHTML = icon('refreshCw', 13, 'style="vertical-align:-2px;margin-right:4px"') + '확인 중...'
+  }
   if (!silent && tauriUpdateStatus) {
     tauriUpdateStatus.style.color = 'var(--text-secondary)'
-    tauriUpdateStatus.textContent = '이미 최신 버전입니다.'
+    tauriUpdateStatus.textContent = ''
+  }
+
+  try {
+    const { check } = await import('@tauri-apps/plugin-updater')
+    const update = await check()
+    if (update) {
+      pendingTauriUpdate = update
+      if (tauriUpdateVersionLine) {
+        tauriUpdateVersionLine.textContent = `v${update.currentVersion} → v${update.version}`
+      }
+      if (tauriUpdateNotes) {
+        tauriUpdateNotes.textContent = update.body || '세부 변경 내역이 제공되지 않았습니다.'
+      }
+      if (tauriUpdateNotesBox) tauriUpdateNotesBox.classList.remove('hidden')
+      if (tauriUpdateInstallBtn) {
+        tauriUpdateInstallBtn.disabled = false
+        tauriUpdateInstallBtn.classList.remove('hidden')
+      }
+      if (tauriUpdateStatus) {
+        tauriUpdateStatus.style.color = '#10b981'
+        tauriUpdateStatus.textContent = '새 업데이트가 있습니다.'
+      }
+      // 백그라운드(로그인 직후/주기적 재확인) 체크일 때만 팝업으로 알림 -
+      // 사용자가 설정 화면에서 직접 확인 버튼을 눌렀을 때는 이미 결과가
+      // 그 자리에 보이므로 팝업까지 겹쳐 띄우지 않는다.
+      if (silent && update.version !== lastNotifiedTauriUpdateVersion) {
+        lastNotifiedTauriUpdateVersion = update.version
+        showTauriUpdateAvailableModal(update)
+      }
+    } else if (tauriUpdateStatus) {
+      tauriUpdateStatus.style.color = 'var(--text-secondary)'
+      tauriUpdateStatus.textContent = '이미 최신 버전입니다.'
+    }
+  } catch (err) {
+    if (tauriUpdateStatus) {
+      tauriUpdateStatus.style.color = '#ef4444'
+      tauriUpdateStatus.textContent = '업데이트 확인 실패: ' + (err.message || err)
+    }
+  } finally {
+    if (tauriUpdateCheckBtn) {
+      tauriUpdateCheckBtn.disabled = false
+      tauriUpdateCheckBtn.innerHTML = icon('checkCircle', 13, 'style="vertical-align:-2px;margin-right:4px"') + '업데이트 확인'
+    }
   }
 }
 
@@ -5304,8 +5202,34 @@ if (updateAvailableNowBtn) {
 // 설정된 주기(매일/매주)가 지났으면 원격 저장소를 확인해 새 버전이 있는지 확인하고,
 // 있으면 변경 로그와 함께 안내 팝업을 띄운다. "사용 안 함"이면 절대 확인하지 않는다.
 async function maybeAutoCheckForUpdate() {
-  // HJPaper: 웹/데스크탑 자동 업데이트 비활성화
-  return
+  try {
+    const cfg = await getUpdateCheckConfigAPI()
+    if (settingUpdateCheckInterval) settingUpdateCheckInterval.value = cfg.interval || 'weekly'
+    if (cfg.interval === 'never') return
+
+    const intervalMs = UPDATE_CHECK_INTERVAL_MS[cfg.interval] || UPDATE_CHECK_INTERVAL_MS.weekly
+    const lastCheckedAt = cfg.last_checked_at ? new Date(cfg.last_checked_at).getTime() : 0
+    const dueNow = !lastCheckedAt || (Date.now() - lastCheckedAt) >= intervalMs
+    if (!dueNow) return
+
+    const result = await checkForUpdateAPI()
+    if (currentVersionLabel && result.current_version) {
+      currentVersionLabel.textContent = `현재 버전: ${formatVersionLabel(result.current_version, result.current_version_date)}`
+    }
+    if (!result.ok || !result.update_available) return
+
+    if (updateAvailableVersionLine) {
+      updateAvailableVersionLine.textContent = `${formatVersionLabel(result.current_version, result.current_version_date)} → ${formatVersionLabel(result.latest_version, result.latest_version_date)}`
+    }
+    renderChangelogList(updateAvailableChangelog, result.changelog)
+    if (updateAvailableProgressArea) updateAvailableProgressArea.classList.add('hidden')
+    if (updateAvailableActions) updateAvailableActions.style.display = 'flex'
+    if (updateAvailableNowBtn) updateAvailableNowBtn.disabled = false
+    if (updateAvailableLaterBtn) updateAvailableLaterBtn.disabled = false
+    if (updateAvailableModal) openOverlayModal(updateAvailableModal)
+  } catch (err) {
+    console.warn('자동 업데이트 확인 실패:', err)
+  }
 }
 
 // 직전 재시작으로 버전이 바뀌었다면(=방금 업데이트 적용됨) 변경 로그와 함께
@@ -8670,7 +8594,7 @@ function prepareDocItemHtml(doc) {
       `</div>`
   }
 
-  const displayTitle = (doc.metadata && doc.metadata.title) ? doc.metadata.title : doc.filename
+  const displayTitle = formatDocumentDisplayTitle(doc)
   const isRead = doc.metadata?.read === true
 
   let dateHtml = `<span class="doc-meta-chip">${date}</span>`
@@ -9163,49 +9087,6 @@ let libraryGraphCacheForDetail = null // fetchLibraryGraph() 결과 캐시 - 패
 const LIBRARY_DETAIL_TABS = ['overview', 'notes', 'questions', 'related']
 
 
-function chooseReparseEngine(currentEngine) {
-  const choices = (pdfParsersData || []).filter(parser => parser.installed && parser.id !== currentEngine)
-  if (!choices.length && currentEngine !== 'pymupdf') {
-    choices.push({ id: 'pymupdf', name: 'PyMuPDF' })
-  }
-  if (!choices.length) {
-    showToast(t('library:reparse.noInstalled'), 'info')
-    return Promise.resolve(null)
-  }
-  return new Promise(resolve => {
-    const modal = document.createElement('div')
-    modal.className = 'custom-confirm-modal-wrapper'
-    modal.innerHTML = `
-      <div class="custom-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="reparse-engine-title">
-        <div class="custom-confirm-modal-header">
-          <span id="reparse-engine-title" class="custom-confirm-modal-title">${t('library:reparse.selectTitle')}</span>
-        </div>
-        <div class="custom-confirm-modal-body">
-          <label class="folder-dialog-label">${t('library:reparse.selectLabel')}
-            <select class="folder-dialog-input reparse-engine-select">
-              ${choices.map(parser => `<option value="${escapeHtml(parser.id)}">${escapeHtml(parser.name || parser.id)}</option>`).join('')}
-            </select>
-          </label>
-        </div>
-        <div class="custom-confirm-modal-footer">
-          <button class="custom-confirm-btn cancel-btn">${t('library:reparse.cancel')}</button>
-          <button class="custom-confirm-btn confirm-btn primary-btn">${t('library:reparse.start')}</button>
-        </div>
-      </div>`
-    document.body.appendChild(modal)
-    const select = modal.querySelector('select')
-    const close = value => {
-      modal.classList.remove('active')
-      setTimeout(() => { modal.remove(); resolve(value) }, 180)
-    }
-    modal.querySelector('.cancel-btn').addEventListener('click', () => close(null))
-    modal.querySelector('.confirm-btn').addEventListener('click', () => close(select.value))
-    modal.addEventListener('keydown', event => { if (event.key === 'Escape') close(null) })
-    modal.addEventListener('click', event => { if (event.target === modal) close(null) })
-    setTimeout(() => { modal.classList.add('active'); select.focus() }, 10)
-  })
-}
-
 function showReparseComparison(preview) {
   return new Promise(resolve => {
     const current = preview.current_report || {}
@@ -9253,12 +9134,7 @@ function showReparseComparison(preview) {
 }
 
 async function runDocumentReparseFlow(doc) {
-  if (!pdfParsersData?.length) {
-    const parserInfo = await fetchPdfParsersInfoAPI()
-    pdfParsersData = parserInfo.parsers || []
-  }
-  const engine = await chooseReparseEngine(doc.parser_engine || 'pymupdf')
-  if (!engine) return
+  const engine = 'mineru'
   showToast(t('library:reparse.running'), 'info')
   let preview = await createReparsePreviewAPI(doc.id, engine)
   while (['queued', 'running'].includes(preview.status)) {
@@ -9467,7 +9343,7 @@ function openLibraryDetailPanel(doc) {
   libraryDetailDoc = doc
   libraryDetailLoadedTabs = new Set(['overview'])
 
-  const displayTitle = (doc.metadata && doc.metadata.title) ? doc.metadata.title : doc.filename
+  const displayTitle = formatDocumentDisplayTitle(doc)
   const isGeneralDocument = (doc.document_mode || 'research') === 'general'
   const openLabel = $('lib-detail-open-btn')?.querySelector('span')
   if (openLabel) openLabel.textContent = isGeneralDocument ? '문서 열기' : '논문 열기'
@@ -9944,7 +9820,7 @@ let docPreviewCurrentDoc = null
 
 function showDocPreview(doc) {
   docPreviewCurrentDoc = doc
-  const displayTitle = (doc.metadata && doc.metadata.title) ? doc.metadata.title : doc.filename
+  const displayTitle = formatDocumentDisplayTitle(doc)
   docPreviewTitle.textContent = displayTitle
 
   // 표지 이미지 생성 실패(손상된 PDF 등) 시 깨진 이미지 아이콘 대신 중립 그라디언트로
@@ -10207,7 +10083,7 @@ function setPrimerModeCopy(isOverview) {
 }
 
 function renderPrimerContent(doc, data, mode) {
-  const displayTitle = (doc.metadata && doc.metadata.title) ? doc.metadata.title : doc.filename
+  const displayTitle = formatDocumentDisplayTitle(doc)
   const isAdaptive = hasAdaptiveBriefing(data)
   if (primerAdaptiveSections) {
     primerAdaptiveSections.classList.toggle('hidden', !isAdaptive)
@@ -10363,7 +10239,7 @@ if (viewerPrimerBtn) {
 async function loadDocumentImages(docId) {
   try {
     const imgRes = await fetchLibraryDocImages(docId)
-    state.documentImages = imgRes.images || []
+    state.documentImages = imgRes?.images || []
 
     // 이미 렌더링되어 있는 페이지들의 오버레이 레이어 갱신
     document.querySelectorAll('.textLayer').forEach(textLayerDiv => {
@@ -10373,6 +10249,9 @@ async function loadDocumentImages(docId) {
         renderImageOverlayLayer(textLayerDiv, pageNum)
         // Figure/Table 라벨은 documentImages가 로드되어야 알 수 있으므로,
         // 이미 렌더링된 페이지들의 본문 참조 오버레이도 여기서 함께 다시 그린다.
+        // 원본 PDF 링크도 최초 렌더 시점의 빈 이미지 목록을 캡처할 수 있으므로
+        // 이미지 로드가 끝난 뒤 다시 그려 미리보기 대상을 최신 상태로 맞춘다.
+        renderPdfLinksOverlay(textLayerDiv, pageNum)
         renderFigureRefOverlayLayer(textLayerDiv, pageNum)
       }
     })
@@ -10385,7 +10264,10 @@ async function loadDocumentImages(docId) {
 async function loadDocumentReferences(docId) {
   try {
     const refRes = await fetchLibraryReferences(docId)
-    state.referenceMap = refRes.references || {}
+    state.referenceMap = {
+      ...embeddedReferenceMap(state.pdfInternalLinks),
+      ...(refRes.references || {}),
+    }
     if (refRes.start_page) {
       state.referencesHeaderPageNum = refRes.start_page
     }
@@ -10396,6 +10278,10 @@ async function loadDocumentReferences(docId) {
       const pageWrapper = textLayerDiv.closest('.pdf-page-wrapper')
       if (pageWrapper) {
         const pageNum = parseInt(pageWrapper.dataset.page)
+        // PDF 링크가 참고문헌 목록보다 먼저 로드되면 이벤트 핸들러가 빈 refMap을
+        // 캡처할 수 있다. 참고문헌 로드 완료 후 원본 링크를 다시 그려 정확한
+        // 참고문헌 한 항목만 팝업에 표시되도록 한다.
+        renderPdfLinksOverlay(textLayerDiv, pageNum)
         renderCitationOverlayLayer(textLayerDiv, pageNum)
       }
     })
@@ -10403,6 +10289,35 @@ async function loadDocumentReferences(docId) {
     console.warn("참고문헌 목록 로드 실패:", e)
     state.referenceMap = {}
     state.citationStyle = null
+  }
+}
+
+async function loadDocumentPdfLinks(docId) {
+  try {
+    const res = await fetchLibraryPdfLinks(docId)
+    state.pdfInternalLinks = res.links || {}
+    // Author-year PDFs often store a citation as two adjacent annotations
+    // (author and year). Their shared exact destination supplies both the
+    // canonical reference key and the full entry, including when the generic
+    // bibliography parser cannot recover a two-column reference list.
+    state.referenceMap = {
+      ...embeddedReferenceMap(state.pdfInternalLinks),
+      ...(state.referenceMap || {}),
+    }
+    state.citationStyle = detectCitationStyle(state.referenceMap)
+    // 이미 렌더링되어 있는 페이지들의 링크 오버레이 및 인용/도표 오버레이 갱신
+    document.querySelectorAll('.textLayer').forEach(textLayerDiv => {
+      const pageWrapper = textLayerDiv.closest('.pdf-page-wrapper')
+      if (pageWrapper) {
+        const pageNum = parseInt(pageWrapper.dataset.page)
+        renderPdfLinksOverlay(textLayerDiv, pageNum)
+        renderCitationOverlayLayer(textLayerDiv, pageNum)
+        renderFigureRefOverlayLayer(textLayerDiv, pageNum)
+      }
+    })
+  } catch (e) {
+    console.warn("Failed to load PDF internal links:", e)
+    state.pdfInternalLinks = {}
   }
 }
 
@@ -10508,6 +10423,7 @@ async function openFromLibrary(doc, shouldPushState = true) {
   await loadFeatureNamespaces('viewer')
   if (docOpeningId === doc.id) return
   focusModeController?.clear()
+  clearJumpHistory()
   if (focusModeController) focusModeController.performanceFallback = false
   const myOpenGeneration = ++documentOpenGeneration
   const isCurrentOpen = () => myOpenGeneration === documentOpenGeneration
@@ -10538,6 +10454,7 @@ async function openFromLibrary(doc, shouldPushState = true) {
     updateMemosHideAllBtnUI()
     loadDocumentImages(doc.id)
     loadDocumentReferences(doc.id)
+    loadDocumentPdfLinks(doc.id)
     state.filename   = doc.filename
     state.currentDocId = doc.id
     state.currentDocMetadata = doc.metadata || {}
@@ -10607,7 +10524,7 @@ async function openFromLibrary(doc, shouldPushState = true) {
       if (readLabel) readLabel.textContent = isResearchDocument ? '독서 완료' : '읽기 완료'
       viewerReadToggleBtn.classList.toggle('active', isRead)
     }
-    const displayTitle = (doc.metadata && doc.metadata.title) ? doc.metadata.title : doc.filename
+    const displayTitle = formatDocumentDisplayTitle(doc)
     state.title      = displayTitle
     state.totalPages = doc.total_pages
     state.translationCache = {}
@@ -10733,7 +10650,10 @@ function escapeHtml(str) {
 // 오버레이 툴팁에 원문 그대로의 볼드 서식을 되살릴 때 이 함수로 변환한다.
 // (formatTranslationHtml과 동일하게 escapeHtml 이후에 ** -> <strong> 치환)
 function renderBoldText(str) {
-  return escapeHtml(str).replace(/\*\*([^*]+?)\*\*/g, '<strong>$1</strong>')
+  let html = escapeHtml(str).replace(/\*\*([^*]+?)\*\*/g, '<strong>$1</strong>')
+  html = html.replace(/&lt;sup(?:\s.*?)?&gt;([\s\S]*?)&lt;\/sup&gt;/gi, '<sup>$1</sup>')
+  html = html.replace(/&lt;sub(?:\s.*?)?&gt;([\s\S]*?)&lt;\/sub&gt;/gi, '<sub>$1</sub>')
+  return html
 }
 
 // marked.parse()는 마크다운 소스에 섞인 raw HTML(<script>, onerror= 등)을 그대로
@@ -10775,7 +10695,6 @@ async function syncDesktopWindowTheme(isLight) {
   try {
     const { getCurrentWindow } = await import('@tauri-apps/api/window')
     const win = getCurrentWindow()
-    await win.setTitle('HJPaper')
     await win.setTheme(isLight ? 'light' : 'dark')
     await win.setBackgroundColor(isLight ? LIGHT_THEME_BG : DARK_THEME_BG)
   } catch (err) {
@@ -10792,13 +10711,19 @@ function initTheme() {
 }
 
 function toggleTheme() {
-  const mode = workspaceModeController.getMode()
   const isLight = document.body.classList.toggle('light-theme')
-  setModeSetting('theme', mode, isLight ? 'light' : 'dark')
+  const nextTheme = isLight ? 'light' : 'dark'
+  setModeSetting('theme', 'research', nextTheme)
+  setModeSetting('theme', 'general', nextTheme)
+  try {
+    localStorage.setItem('theme', nextTheme)
+    localStorage.setItem('hjpaper_theme', nextTheme)
+  } catch {}
   updateThemeIcons(isLight)
   applyAccentColor(currentAccentColor, { persist: false })
   showToast(isLight ? t('settings:themeLightEnabled') : t('settings:themeDarkEnabled'), 'success')
   syncDesktopWindowTheme(isLight)
+  patchWorkspaceSettingsAPI({ theme: nextTheme }).catch(() => {})
 }
 
 function updateThemeIcons(isLight) {
@@ -10921,7 +10846,15 @@ function applyAccentColor(hex, { persist = true } = {}) {
   document.body.style.setProperty('--border-glow', isLight ? tokens.borderGlowLight : tokens.borderGlowDark)
 
   currentAccentColor = hex
-  if (persist) setModeSetting('accentColor', workspaceModeController.getMode(), hex)
+  if (persist) {
+    setModeSetting('accentColor', 'research', hex)
+    setModeSetting('accentColor', 'general', hex)
+    try {
+      localStorage.setItem('easypaper_accent_color', hex)
+      localStorage.setItem('hjpaper_accent_color', hex)
+    } catch {}
+    patchWorkspaceSettingsAPI({ accent_color: hex }).catch(() => {})
+  }
   updateAccentSettingsUI(hex)
 }
 
@@ -13454,6 +13387,7 @@ window.onTextLayerRendered = (textLayerDiv, pageNum) => {
   }
 
   renderImageOverlayLayer(textLayerDiv, pageNum)
+  renderPdfLinksOverlay(textLayerDiv, pageNum)
   renderCitationOverlayLayer(textLayerDiv, pageNum)
   renderFigureRefOverlayLayer(textLayerDiv, pageNum)
 
@@ -13776,14 +13710,14 @@ const CITATION_MARKER_RE = new RegExp(
 // 여는 괄호 바로 뒤 대문자로 시작하고, 닫는 괄호 전 20자 이내에 4자리 연도가
 // 있어야 인용으로 인정한다(오탐 방지 - 그냥 "(그림 2020년 기준)" 같은 일반
 // 괄호 문구가 걸리지 않도록 대문자 시작 + 연도 둘 다 요구).
-const CITATION_AUTHOR_YEAR_MARKER_RE = /\([A-ZÀ-Ö][^()]{2,160}?\d{4}[a-z]?[^()]{0,20}\)/g
+const CITATION_AUTHOR_YEAR_MARKER_RE = /\([A-ZÀ-ÖØ-Þ\u0100-\u024F\u1E00-\u1EFF][^()]{2,160}?\d{4}[a-z]?[^()]{0,20}\)/g
 // 서술형 저자-연도: 저자명(과 "and"/"&"로 이어지는 공저자, 또는 "et al.")
 // 뒤에 곧바로 "(2020)"류 연도만 담긴 괄호가 온다. 콤마나 이니셜이 중간에
 // 끼면 REF_ENTRY_AUTHOR_YEAR_RE(참고문헌 목록 항목)이 담당할 형태이므로
 // 여기서는 매칭하지 않는다 - 두 정규식이 References 섹션 안에서 같은
 // 텍스트에 중복으로 걸리는 것을 방지.
 const CITATION_NARRATIVE_AUTHOR_YEAR_RE =
-  /\b([A-ZÀ-Ö][A-Za-zÀ-ÖØ-öø-ÿ\-']+)(?:\s+(?:and|&)\s+[A-ZÀ-Ö][A-Za-zÀ-ÖØ-öø-ÿ\-']+)?(?:\s+et\s+al\.?)?\s+\((\d{4})[a-z]?\)/g
+  /\b([A-ZÀ-ÖØ-Þ\u0100-\u024F\u1E00-\u1EFF][A-Za-zÀ-ÖØ-öø-ÿ\u0100-\u024F\u1E00-\u1EFF\-']+)(?:\s+(?:and|&)\s+[A-ZÀ-ÖØ-Þ\u0100-\u024F\u1E00-\u1EFF][A-Za-zÀ-ÖØ-öø-ÿ\u0100-\u024F\u1E00-\u1EFF\-']+)?(?:\s+et\s+al\.?)?\s+\((\d{4})[a-z]?\)/g
 
 // "[12, 14-16]", "[BCV13, Dev86]", "[1,3,5-8]" 형태의 대괄호 안 내용을
 // 항목별 위치 정보와 함께 뽑아낸다. 쉼표로 나열된 각 항목은 독립적인
@@ -13826,12 +13760,12 @@ function extractBracketCitationItems(fullText, match) {
 //
 // 번호형: "12. Author..." / "12) Author..." - 백엔드의 _PLAIN_NUMBERED_ENTRY_RE와
 // 동일한 형태를, 뒤에 대문자(또는 한글)로 시작하는 저자명이 이어질 때만 인정한다.
-const REF_ENTRY_PLAIN_NUMBER_RE = /\b(\d{1,3})[.)]\s+(?=[A-Z가-힣])/g
+const REF_ENTRY_PLAIN_NUMBER_RE = /\b(\d{1,3})[.)]\s+(?=[A-ZÀ-ÖØ-Þ\u0100-\u024F\u1E00-\u1EFF가-힣])/g
 // 저자-연도형: "Author, A. ... (2020)." - 백엔드의 _AUTHOR_YEAR_ENTRY_START_RE
 // (성+쉼표로 시작) 와 _YEAR_RE(괄호 안 4자리 연도)를 하나로 합친 형태. 본문
 // 인용 표기와 달리 연도가 그 자체로 괄호에 싸여 있고 저자 이름은 괄호 밖에
 // 있는 문헌 목록 서식(APA류)을 겨냥한다.
-const REF_ENTRY_AUTHOR_YEAR_RE = /\b([A-ZÀ-Ö][A-Za-zÀ-ÖØ-öø-ÿ\-']+),\s[^()]{0,160}?\((\d{4})[a-z]?\)/g
+const REF_ENTRY_AUTHOR_YEAR_RE = /\b([A-ZÀ-ÖØ-Þ\u0100-\u024F\u1E00-\u1EFF][A-Za-zÀ-ÖØ-öø-ÿ\u0100-\u024F\u1E00-\u1EFF\-']+),\s[^()]{0,160}?\((\d{4})[a-z]?\)/g
 
 // "(Smith, 2020; Jones et al., 2019)" 형태를 세미콜론 기준으로 나눠, 각
 // 항목의 위치 정보와 함께 반환한다 - 항목마다 독립적인 오버레이를 걸기
@@ -13851,8 +13785,9 @@ function extractAuthorYearClauses(fullText, match) {
     const trailing = rawPart.match(/\s*$/)[0].length
     const text = rawPart.slice(leading, rawPart.length - trailing)
     if (!text) return
-    const surnameMatch = text.match(/^([A-ZÀ-Ö][A-Za-zÀ-ÖØ-öø-ÿ\-']+)/)
-    const yearMatch = text.match(/(\d{4})[a-z]?/)
+    const cleanT = normalizeDiacritics(text)
+    const surnameMatch = cleanT.match(/^([A-ZÀ-ÖØ-Þ\u0100-\u024F\u1E00-\u1EFF][A-Za-zÀ-ÖØ-öø-ÿ\u0100-\u024F\u1E00-\u1EFF\-']+)/)
+    const yearMatch = cleanT.match(/(\d{4})[a-z]?/)
     if (!surnameMatch || !yearMatch) return
     clauses.push({
       start: innerStart + partStart + leading,
@@ -13901,6 +13836,272 @@ function detectReferencesSectionStart(vtm, pageNum) {
   return m ? m.index : 0
 }
 
+// 원본 PDF 링크 박스와 합성 링크 박스 간의 겹침 판별 (중복 박스 방지)
+function hasOverlappingPdfLink(rect, pageWrapper) {
+  const existingLinks = pageWrapper.querySelectorAll('.pdf-link-box')
+  if (!existingLinks.length) return false
+  const inner = pageWrapper.querySelector('.pdf-page-inner') || pageWrapper
+  const w = inner.clientWidth || 1
+  const h = inner.clientHeight || 1
+  const rx0 = (rect.left / w) * 100
+  const ry0 = (rect.top / h) * 100
+  const rx1 = ((rect.left + rect.width) / w) * 100
+  const ry1 = ((rect.top + rect.height) / h) * 100
+
+  for (const el of existingLinks) {
+    const lx0 = parseFloat(el.style.left)
+    const ly0 = parseFloat(el.style.top)
+    const lx1 = lx0 + parseFloat(el.style.width)
+    const ly1 = ly0 + parseFloat(el.style.height)
+
+    const xOverlap = Math.max(0, Math.min(rx1, lx1) - Math.max(rx0, lx0))
+    const yOverlap = Math.max(0, Math.min(ry1, ly1) - Math.max(ry0, ly0))
+    const overlapArea = xOverlap * yOverlap
+    const rArea = Math.max(0.01, (rx1 - rx0) * (ry1 - ry0))
+    if (overlapArea / rArea > 0.35) {
+      return true
+    }
+  }
+  return false
+}
+
+// PDF 원본 파일에 임베딩된 내부/외부 하이퍼링크 오버레이 레이어 렌더링
+function renderPdfLinksOverlay(textLayerDiv, pageNum) {
+  const pageWrapper = textLayerDiv.closest('.pdf-page-wrapper')
+  if (!pageWrapper) return
+
+  const overlay = getOrCreateOverlay(pageWrapper)
+  overlay.querySelectorAll('.pdf-link-box').forEach(el => el.remove())
+
+  const pageLinks = state.pdfInternalLinks && state.pdfInternalLinks[pageNum]
+  if (!pageLinks || !pageLinks.length) return
+
+  const docId = state.currentDocId
+  const refMap = state.referenceMap || {}
+  const images = state.documentImages || []
+
+  pageLinks.forEach(link => {
+    const [leftPct, topPct, widthPct, heightPct] = link.from || []
+    if (typeof leftPct !== 'number' || typeof topPct !== 'number') return
+
+    const box = document.createElement('div')
+    const destType = link.dest_type || 'reference'
+    const shortType = destType === 'reference' ? 'ref' : destType === 'figure' ? 'fig' : destType === 'equation' ? 'eq' : destType
+    box.className = `pdf-link-box pdf-link-${destType} pdf-link-${shortType}`
+    box.dataset.destType = destType
+    box.style.left = `${leftPct}%`
+    box.style.top = `${topPct}%`
+    box.style.width = `${widthPct}%`
+    box.style.height = `${heightPct}%`
+    box.tabIndex = 0
+
+    // 1. 외부 URL 링크 (LINK_URI)
+    if (destType === 'uri') {
+      const uri = link.uri || ''
+      box.setAttribute('role', 'link')
+      box.setAttribute('aria-label', uri)
+      box.title = uri
+      box.addEventListener('click', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        openExternalUrl(uri)
+      })
+      box.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          e.stopPropagation()
+          openExternalUrl(uri)
+        }
+      })
+      overlay.appendChild(box)
+      return
+    }
+
+    // 2. 도표 / 그림 / 수식 링크 (Figure / Table / Equation)
+    if (destType === 'figure' || destType === 'table' || destType === 'equation') {
+      box.setAttribute('role', 'button')
+      box.setAttribute('aria-haspopup', 'dialog')
+      box.setAttribute('aria-expanded', 'false')
+
+      let kind = 'Figure'
+      if (destType === 'table') kind = 'Table'
+      else if (destType === 'equation') kind = 'Equation'
+      else {
+        const lower = (link.text || '').toLowerCase()
+        if (lower.startsWith('tab')) kind = 'Table'
+        else if (lower.startsWith('eq')) kind = 'Equation'
+      }
+
+      const numMatch = /\b(?:[A-Za-z가-힣]+)?\s*([sS]?(?:[0-9]+(?:\.[0-9]+)*|[IVXLCDM]+)[A-Za-z]?)/i.exec(link.text || '')
+      const num = numMatch ? numMatch[1] : ''
+
+      let targetImage = null
+      if (num && images.length) {
+        targetImage = images.find(img => img.label === `${kind} ${num}` || img.label === `${kind} ${num.replace(/[A-Za-z]+$/, '')}`) ||
+                      images.find(img => img.page === link.target_page)
+      }
+
+      box.title = link.text ? `${link.text} (p.${link.target_page})` : `${kind} (p.${link.target_page})`
+
+      if (targetImage) {
+        box.addEventListener('mouseenter', () => showFigurePreviewTooltip([targetImage], box))
+        box.addEventListener('mouseleave', scheduleFigurePreviewTooltipHide)
+      }
+
+      const doJump = () => {
+        if (link.target_page) {
+          recordJumpHistory(link.target_page)
+          scrollToPage(viewerScrollContainer, link.target_page, { instant: false, yPct: link.dest_y_pct })
+          setTimeout(() => {
+            const targetPw = viewerScrollContainer.querySelector(`.pdf-page-wrapper[data-page="${link.target_page}"]`)
+            if (targetPw) {
+              const ov = getOrCreateOverlay(targetPw)
+              const pulseBox = document.createElement('div')
+              pulseBox.className = 'sentence-pulse-box'
+              pulseBox.style.left = '5%'
+              pulseBox.style.width = '90%'
+              pulseBox.style.top = `${Math.max(0, (link.dest_y_pct || 0) - 2)}%`
+              pulseBox.style.height = '60px'
+              ov.appendChild(pulseBox)
+              setTimeout(() => pulseBox.remove(), 2500)
+            }
+          }, 400)
+        }
+      }
+
+      box.addEventListener('click', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        if (targetImage) {
+          if (figurePreviewTooltipEl && !figurePreviewTooltipEl.classList.contains('hidden') && figurePreviewBoxEl === box) {
+            hideFigurePreviewTooltip()
+            return
+          }
+          showFigurePreviewTooltip([targetImage], box, { focus: true, pinned: true })
+        } else {
+          doJump()
+        }
+      })
+
+      box.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          e.stopPropagation()
+          if (targetImage) {
+            showFigurePreviewTooltip([targetImage], box, { focus: true, pinned: true })
+          } else {
+            doJump()
+          }
+        }
+      })
+
+      overlay.appendChild(box)
+      return
+    }
+
+    // 3. 저자 소속 각주 등 일반 내부 링크. 숫자가 참고문헌 번호와 같아도
+    // 전역 referenceMap을 건드리지 않고 PDF 원본 목적지로 바로 이동한다.
+    if (destType === 'internal') {
+      box.setAttribute('role', 'button')
+      box.title = link.text
+        ? `${link.text} (p.${link.target_page})`
+        : `PDF 내부 링크 (p.${link.target_page})`
+
+      const doJump = () => {
+        if (link.target_page) {
+          recordJumpHistory(link.target_page)
+          scrollToPage(viewerScrollContainer, link.target_page, {
+            instant: false,
+            yPct: link.dest_y_pct,
+          })
+        }
+      }
+      box.addEventListener('click', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        doJump()
+      })
+      box.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          e.stopPropagation()
+          doJump()
+        }
+      })
+      overlay.appendChild(box)
+      return
+    }
+
+    // 4. 인용구 / 참고문헌 점프 링크 (Reference)
+    box.setAttribute('role', 'button')
+    box.setAttribute('aria-haspopup', 'dialog')
+    box.setAttribute('aria-expanded', 'false')
+
+    const cleanText = (link.text || '').replace(/[\[\]\(\)]/g, '').trim()
+    const refKeys = embeddedReferenceKeys(link.text, link.dest_text)
+
+    // 링크 목적지 텍스트는 이 링크에만 적용한다. 저자 소속 각주와 참고문헌이
+    // 같은 숫자를 쓰는 PDF에서 전역 refMap을 수정하면 서로 덮어쓰게 된다.
+    const linkRefMap = { ...refMap }
+    if (refKeys.length && link.dest_text) {
+      const cleanDest = normalizeDiacritics(link.dest_text)
+      refKeys.forEach(k => {
+        if (!linkRefMap[k]) {
+          linkRefMap[k] = cleanDest
+        }
+        const asciiK = k.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+        if (asciiK && !linkRefMap[asciiK]) {
+          linkRefMap[asciiK] = cleanDest
+        }
+      })
+    }
+
+    const keysToUse = refKeys.length ? refKeys : [cleanText || 'ref']
+
+    box.addEventListener('mouseenter', () => {
+      showCitationTooltip(docId, keysToUse, linkRefMap, box, {
+        targetPage: link.target_page,
+        targetYPct: link.dest_y_pct,
+      })
+    })
+    box.addEventListener('mouseleave', scheduleCitationTooltipHide)
+
+    box.addEventListener('click', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      if (citationTooltipEl && !citationTooltipEl.classList.contains('hidden') && citationTooltipBoxEl === box) {
+        hideCitationTooltip()
+        return
+      }
+      showCitationTooltip(docId, keysToUse, linkRefMap, box, {
+        focus: true,
+        pinned: true,
+        targetPage: link.target_page,
+        targetYPct: link.dest_y_pct,
+      })
+    })
+
+    box.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault()
+        e.stopPropagation()
+        showCitationTooltip(docId, keysToUse, linkRefMap, box, {
+          focus: true,
+          pinned: true,
+          targetPage: link.target_page,
+          targetYPct: link.dest_y_pct,
+        })
+      } else if (e.key === 'Escape') {
+        e.preventDefault()
+        hideCitationTooltip()
+        box.focus()
+      }
+    })
+
+    overlay.appendChild(box)
+  })
+}
+
 // 본문 인용 표기 오버레이 - 참고문헌 목록에 실제로 존재하는 항목을 가리키는
 // 표기만 클릭 가능하게 만든다(오탐/미매칭 표기까지 다 클릭되게 하면 클릭할
 // 때마다 404 토스트만 뜨는 경험이 되므로).
@@ -13945,6 +14146,8 @@ function renderCitationOverlayLayer(textLayerDiv, pageNum) {
     if (keysToUse.length === 0) return
     const rects = getSentenceRects({ charStart, charEnd }, vtm, textLayerDiv)
     rects.forEach(r => {
+      // 원본 PDF 임베디드 링크가 이미 존재하는 위치면 중복 박스 생성 건너뜀
+      if (hasOverlappingPdfLink(r, pageWrapper)) return
       const box = document.createElement('div')
       box.className = 'citation-marker-box'
       box.style.left   = `${r.left}px`
@@ -14009,7 +14212,8 @@ function renderCitationOverlayLayer(textLayerDiv, pageNum) {
     // "Smith (2020)", "Li and Wang (2023)" 같은 서술형 인용
     CITATION_NARRATIVE_AUTHOR_YEAR_RE.lastIndex = 0
     while ((match = CITATION_NARRATIVE_AUTHOR_YEAR_RE.exec(vtm.fullText)) !== null) {
-      const key = `${match[1].toLowerCase()}${match[2]}`
+      const cleanSurname = normalizeDiacritics(match[1])
+      const key = `${cleanSurname.toLowerCase()}${match[2]}`
       addCitationBox(match.index, match.index + match[0].length, [key])
     }
   }
@@ -14036,7 +14240,8 @@ function renderCitationOverlayLayer(textLayerDiv, pageNum) {
       REF_ENTRY_AUTHOR_YEAR_RE.lastIndex = 0
       while ((match = REF_ENTRY_AUTHOR_YEAR_RE.exec(vtm.fullText)) !== null) {
         if (match.index < referencesSectionStart) continue
-        const key = `${match[1].toLowerCase()}${match[2]}`
+        const cleanSurname = normalizeDiacritics(match[1])
+        const key = `${cleanSurname.toLowerCase()}${match[2]}`
         addCitationBox(match.index, match.index + match[0].length, [key])
       }
     }
@@ -14055,7 +14260,7 @@ function renderCitationOverlayLayer(textLayerDiv, pageNum) {
 // lookahead는 그룹이 전부 빈 문자열로 매칭되어 공백이 "로마 숫자"로 인정되는 것을 막는다.
 const ROMAN_NUMERAL_SRC = '(?=[MDCLXVI])M{0,4}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3})'
 
-const FIGURE_TABLE_NUM_SRC = `(?:\\d+|${ROMAN_NUMERAL_SRC})`
+const FIGURE_TABLE_NUM_SRC = `(?:[sS]?(?:\\d+(?:\\.\\d+)+|\\d+)|${ROMAN_NUMERAL_SRC})`
 // 숫자 본체 하나: "(1)"처럼 괄호로 감싼 형태(Equation 표기에 흔함) 또는 맨 숫자.
 const FIGURE_TABLE_NUM_CORE_SRC = `(?:\\(\\s*${FIGURE_TABLE_NUM_SRC}\\s*\\)|${FIGURE_TABLE_NUM_SRC})`
 // Subfigure 접미사: 숫자 바로 뒤에 공백 없이 붙는 글자 하나("Fig. 2f", "Figure 5B")
@@ -14066,10 +14271,11 @@ const FIGURE_TABLE_SUBFIG_SUFFIX_SRC =
   `(?:[a-zA-Z](?![a-zA-Z0-9])|\\(\\s*[a-zA-Z](?:\\s*[-–,]\\s*[a-zA-Z])*\\s*\\))`
 // 숫자 하나 + (있다면) subfigure 접미사. 접미사가 없다면 바로 뒤에 글자/숫자가
 // 이어지면 안 된다("Fig 2nd"처럼 서수나 다른 단어의 일부인 경우를 배제).
+// "Figure 3 (a)"처럼 숫자와 괄호형 subfigure 접미사 사이의 공백도 허용한다.
 const FIGURE_TABLE_NUM_ITEM_SRC =
-  `${FIGURE_TABLE_NUM_CORE_SRC}(?:${FIGURE_TABLE_SUBFIG_SUFFIX_SRC}|(?![a-zA-Z0-9]))`
-// 새 숫자를 잇는 느슨한 연결어(공백 허용): "Figs. 1 and 2", "Tables 1, 2", "Figs. 3-5".
-const FIGURE_TABLE_LOOSE_CONNECTOR_SRC = `\\s*(?:[-–—,]|and|&)\\s*`
+  `${FIGURE_TABLE_NUM_CORE_SRC}(?:\\s*${FIGURE_TABLE_SUBFIG_SUFFIX_SRC}|(?![a-zA-Z0-9]))`
+// 새 숫자를 잇는 느슨한 연결어(공백 허용): "Figs. 1 and 2", "Tables 1, 2", "Figs. 3-5", "그림 1 및 2".
+const FIGURE_TABLE_LOOSE_CONNECTOR_SRC = `\\s*(?:[-–—,]|and|&|\\uBC0F)\\s*`
 // subfigure 글자만 이어붙이는 빡빡한 연결어(공백 없음): "Fig. 6a,c"의 ",c",
 // "Fig. 2a-d"의 "-d". 공백이 있으면("Fig. 3, a detailed...") 일반 문장의 일부일
 // 가능성이 높으므로, subfigure 이어붙이기는 반드시 공백이 없는 경우만 인정한다.
@@ -14087,28 +14293,31 @@ const FIGURE_TABLE_CONT_ITEM_SRC =
 // 접미사로 파싱되어 "Tab"만 키워드로 잘못 채택되는 경우가 있다(Tables?가 실패하면
 // 엔진이 Tabs? 같은 더 짧은 대안으로 백트래킹하기 때문). \b를 두면 "Tab"과 그
 // 다음 글자 사이에 실제 단어 경계가 없는 이상 이 대안 자체가 거부된다.
+// 한글 키워드(그림, 표, 수식)도 함께 인식한다.
+const FIGURE_TABLE_KEYWORD_SRC =
+  `(?:(?<=[^A-Za-z0-9\\uAC00-\\uD7A3]|^)(?:\\uADF8\\uB9BC|\\uB3C4|\\uD45C|\\uC218\\uC2DD)|\\b(?:Figures?|Figs?|Tables?|Tabs?|Equations?|Eqns?|Eqs?)\\b)`
 const FIGURE_TABLE_REF_RE = new RegExp(
-  `\\b(Figures?|Figs?|Tables?|Tabs?|Equations?|Eqns?|Eqs?)\\b\\.?\\s*` +
+  `${FIGURE_TABLE_KEYWORD_SRC}\\.?\\s*` +
   `(${FIGURE_TABLE_NUM_ITEM_SRC}(?:${FIGURE_TABLE_CONT_ITEM_SRC})*)`,
   'gi'
 )
 
 function normalizeFigureTableKind(keyword) {
   const kw = keyword.toLowerCase()
-  if (kw.startsWith('fig')) return 'Figure'
-  if (kw.startsWith('tab')) return 'Table'
+  if (kw.startsWith('fig') || /^(?:\uADF8\uB9BC|\uB3C4)$/.test(kw)) return 'Figure'
+  if (kw.startsWith('tab') || kw === '\uD45C') return 'Table'
   return 'Equation'
 }
 
-// FIGURE_TABLE_REF_RE가 캡처한 payload(예: "6a,c", "3-5", "(4) and (5)")를
+// FIGURE_TABLE_REF_RE가 캡처한 payload(예: "6a,c", "3-5", "10.1, 10.2", "(4) and (5)")를
 // 개별 Figure/Table/Equation 번호 목록으로 펼친다.
 // - 숫자 뒤에 공백 없이 붙는 subfigure 접미사(글자, "(a,b,c)")는 무시한다
 //   (backend가 여러 subfigure 패널을 하나의 bbox로 병합해 저장하므로
 //   documentImages 매칭에는 상위 Figure 번호만 있으면 된다).
 // - 빡빡한 연결어(공백 없는 ','/'-') 뒤에 오는 글자 하나는 새 숫자가 아니라
 //   직전 숫자의 subfigure 이어붙이기로 보고 무시한다.
-// - 공백이 있는 연결어(", "/" and "/" & ") 뒤에 오는 숫자는 새로운 대상이다.
-// - 대시로 이어진 순수 아라비아 숫자 두 개("3-5")는 그 사이 숫자를 모두 포함하는
+// - 공백이 있는 연결어(", "/" and "/" & "/" 및 ") 뒤에 오는 숫자는 새로운 대상이다.
+// - 대시로 이어진 순수 아라비아 숫자 두 개("3-5" 또는 "10.1-10.4")는 그 사이 숫자를 모두 포함하는
 //   범위로 펼친다(로마 숫자 범위는 흔치 않아 지원하지 않음).
 function parseFigureTableNumberList(payload) {
   const numbers = []
@@ -14121,10 +14330,10 @@ function parseFigureTableNumberList(payload) {
     return (m && m.index === i) ? m : null
   }
 
-  const numCoreRe = new RegExp(`\\(?\\s*(\\d+|${ROMAN_NUMERAL_SRC})\\s*\\)?`, 'iy')
-  const subfigSkipRe = new RegExp(FIGURE_TABLE_SUBFIG_SUFFIX_SRC, 'iy')
+  const numCoreRe = new RegExp(`\\(?\\s*(${FIGURE_TABLE_NUM_SRC})\\s*\\)?`, 'iy')
+  const subfigSkipRe = new RegExp(`\\s*${FIGURE_TABLE_SUBFIG_SUFFIX_SRC}`, 'iy')
   const tightConnRe = new RegExp(FIGURE_TABLE_TIGHT_CONNECTOR_SRC, 'y')
-  const looseConnRe = new RegExp(`\\s*(?:([-–—])|,|and|&)\\s*`, 'iy')
+  const looseConnRe = new RegExp(`\\s*(?:([-–—])|,|and|&|\\uBC0F)\\s*`, 'iy')
   const bareLetterRe = new RegExp(FIGURE_TABLE_BARE_LETTER_ITEM_SRC, 'y')
 
   function readNumber() {
@@ -14132,7 +14341,7 @@ function parseFigureTableNumberList(payload) {
     if (!m) return null
     i += m[0].length
     const raw = m[1]
-    const isRoman = !/^\d+$/.test(raw)
+    const isRoman = !/^[sS]?\d+(?:\.\d+)*$/.test(raw)
     const value = isRoman ? raw.toUpperCase() : raw
     const sm = matchHere(subfigSkipRe) // subfigure 접미사는 건너뛰기만 함
     if (sm) i += sm[0].length
@@ -14142,7 +14351,7 @@ function parseFigureTableNumberList(payload) {
   const first = readNumber()
   if (!first) return []
   numbers.push(first.value)
-  let lastWasPlainDecimal = !first.isRoman
+  let lastWasPlainDecimal = !first.isRoman && /^\d+$/.test(first.value)
 
   while (i < s.length) {
     const save = i
@@ -14161,7 +14370,7 @@ function parseFigureTableNumberList(payload) {
       i += lm[0].length
       const next = readNumber()
       if (next) {
-        if (isDash && lastWasPlainDecimal && !next.isRoman) {
+        if (isDash && lastWasPlainDecimal && !next.isRoman && /^\d+$/.test(next.value)) {
           const start = parseInt(numbers[numbers.length - 1], 10)
           const end = parseInt(next.value, 10)
           if (end >= start && end - start <= 50) {
@@ -14169,10 +14378,26 @@ function parseFigureTableNumberList(payload) {
           } else {
             numbers.push(next.value)
           }
+        } else if (isDash && !next.isRoman) {
+          const lastVal = numbers[numbers.length - 1]
+          const m1 = /^(\d+\.)(\d+)$/.exec(lastVal)
+          const m2 = /^(\d+\.)(\d+)$/.exec(next.value)
+          if (m1 && m2 && m1[1] === m2[1]) {
+            const prefix = m1[1]
+            const start = parseInt(m1[2], 10)
+            const end = parseInt(m2[2], 10)
+            if (end >= start && end - start <= 50) {
+              for (let n = start + 1; n <= end; n++) numbers.push(`${prefix}${n}`)
+            } else {
+              numbers.push(next.value)
+            }
+          } else {
+            numbers.push(next.value)
+          }
         } else {
           numbers.push(next.value)
         }
-        lastWasPlainDecimal = !next.isRoman
+        lastWasPlainDecimal = !next.isRoman && /^\d+$/.test(next.value)
         continue
       }
       i = save
@@ -14213,6 +14438,8 @@ function renderFigureRefOverlayLayer(textLayerDiv, pageNum) {
 
     const rects = getSentenceRects({ charStart: match.index, charEnd: match.index + match[0].length }, vtm, textLayerDiv)
     rects.forEach(r => {
+      // 원본 PDF 임베디드 링크가 이미 존재하는 위치면 중복 박스 생성 건너뜀
+      if (hasOverlappingPdfLink(r, pageWrapper)) return
       const box = document.createElement('div')
       box.className = 'figure-ref-marker-box'
       box.style.left   = `${r.left}px`
@@ -14328,6 +14555,7 @@ function getOrCreateFigurePreviewTooltip() {
       e.stopPropagation()
       const targetPage = parseInt(jumpBtn.dataset.page, 10)
       if (!isNaN(targetPage)) {
+        recordJumpHistory(targetPage)
         hideFigurePreviewTooltip()
         scrollToPage(viewerScrollContainer, targetPage)
       }
@@ -14420,8 +14648,20 @@ function positionFigurePreviewTooltip() {
   const th = figurePreviewTooltipEl.offsetHeight || 160
   let left = rect.left + rect.width / 2 - tw / 2
   left = Math.max(8, Math.min(left, window.innerWidth - tw - 8))
-  let top = rect.top - th - 10
-  if (top < 8) top = rect.bottom + 10
+
+  const spaceAbove = rect.top - 10
+  const spaceBelow = window.innerHeight - rect.bottom - 10
+
+  let top
+  if (spaceAbove >= th) {
+    top = rect.top - th - 10
+  } else if (spaceBelow >= th) {
+    top = rect.bottom + 10
+  } else {
+    top = spaceBelow >= spaceAbove ? rect.bottom + 10 : rect.top - th - 10
+  }
+  top = Math.max(8, Math.min(top, Math.max(8, window.innerHeight - th - 8)))
+
   figurePreviewTooltipEl.style.left = `${left}px`
   figurePreviewTooltipEl.style.top = `${top}px`
 }
@@ -14504,10 +14744,9 @@ document.addEventListener('scroll', () => {
   }
 }, true)
 
-// ── 인용 표기 호버 툴팁: 참고문헌 원문 + 외부 링크 찾기 + Google Scholar 검색 ──
+// ── 인용 표기 호버 툴팁: 참고문헌 원문 + Google Scholar 검색 ──
 let citationTooltipEl = null
 let citationTooltipHideTimer = null
-let citationTooltipDocId = null
 let citationTooltipReferences = []
 let citationTooltipBoxEl = null
 let citationTooltipIsPinned = false
@@ -14515,7 +14754,7 @@ let citationTooltipClosedAt = 0
 
 // Tauri 데스크탑 webview는 보안상 window.open()/target="_blank"로 외부
 // URL을 새 탭으로 열어주지 않는다(웹 브라우저와 달리 시스템 기본 브라우저를
-// 열 권한이 없음) - Google Scholar 검색/참고문헌 링크가 데스크탑 앱에서만
+// 열 권한이 없음) - Google Scholar 검색이 데스크탑 앱에서만
 // 아무 반응 없던 원인. @tauri-apps/plugin-opener의 openUrl()로 시스템 기본
 // 브라우저를 명시적으로 열어준다. 웹 배포에서는 isTauriDesktop이 항상
 // false라 기존 window.open 그대로 동작(동일 frontend/dist 재사용).
@@ -14544,10 +14783,8 @@ function getOrCreateCitationTooltip() {
       <button type="button" class="citation-tooltip-close-btn" style="border:none;background:var(--bg-hover, rgba(128,128,128,0.15));cursor:pointer;font-size:14px;padding:3px 8px;border-radius:4px;color:var(--text-primary);line-height:1;display:flex;align-items:center;justify-content:center;font-weight:bold" title="Close (Esc)" aria-label="Close">✕</button>
     </div>
     <div class="citation-tooltip-text"></div>
-    <div class="citation-tooltip-result hidden"></div>
     <div class="citation-tooltip-scholar-results hidden"></div>
     <div class="citation-tooltip-actions">
-      <button type="button" class="citation-tooltip-action-btn citation-tooltip-resolve-btn">${icon('search', 11, 'style="vertical-align:-1px;margin-right:3px"')}원문 링크 찾기</button>
       <button type="button" class="citation-tooltip-action-btn citation-tooltip-scholar-btn">${icon('externalLink', 11, 'style="vertical-align:-1px;margin-right:3px"')}Google Scholar 검색</button>
       <button type="button" class="citation-tooltip-action-btn citation-tooltip-jump-btn" style="display:none">${icon('externalLink', 11, 'style="vertical-align:-1px;margin-right:3px"')}참고문헌 섹션으로 이동</button>
     </div>
@@ -14570,10 +14807,6 @@ function getOrCreateCitationTooltip() {
     hideCitationTooltip()
     trigger?.focus()
   })
-  el.querySelector('.citation-tooltip-resolve-btn').addEventListener('click', (e) => {
-    e.stopPropagation()
-    resolveCitationTooltip()
-  })
   el.querySelector('.citation-tooltip-scholar-btn').addEventListener('click', (e) => {
     e.stopPropagation()
     const searchableRefs = citationTooltipReferences
@@ -14591,9 +14824,8 @@ function getOrCreateCitationTooltip() {
     ).join('')
     positionCitationTooltip()
   })
-  // resolveCitationTooltip()이 innerHTML로 채워 넣는 "원문 링크 찾기" 결과의
-  // <a> 태그는 그때그때 새로 생기므로, 매번 리스너를 다는 대신 이 안정적인
-  // 부모 요소에 위임해서 한 번만 등록한다.
+  // 복수 참고문헌의 Google Scholar 결과 링크는 동적으로 생성되므로
+  // 안정적인 부모 요소에서 클릭을 위임 처리한다.
   el.addEventListener('click', (e) => {
     const anchor = e.target.closest('a[href]')
     if (anchor && isTauriDesktop) {
@@ -14620,58 +14852,80 @@ function positionCitationTooltip() {
   citationTooltipEl.style.top = `${top}px`
 }
 
+function getCitationRefText(k, map) {
+  if (!map) return ''
+  if (map[k]) return map[k]
+  const asciiK = k.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+  if (map[asciiK]) return map[asciiK]
+  const nfcK = k.normalize('NFC')
+  if (map[nfcK]) return map[nfcK]
+  return ''
+}
+
 // refKeys가 여러 개면(예: "[66-69]" 범위 인용, "(A, 2020; B, 2019)" 나열)
 // 각 항목을 "[키] 원문" 형태로 구분해 전부 보여준다.
 function buildCitationTooltipHtml(refKeys, refMap) {
   if (refKeys.length === 1) {
-    const text = refMap[refKeys[0]]
+    const text = getCitationRefText(refKeys[0], refMap)
     if (text) return renderBoldText(text)
-    return `<div class="citation-tooltip-unmapped"><span class="citation-tooltip-multi-key">[${escapeHtml(refKeys[0])}]</span> <span style="color:var(--text-muted,#94a3b8)">(참고문헌 세부정보를 검색하거나 아래 Google Scholar 검색을 이용하세요)</span></div>`
+    return `<div class="citation-tooltip-unmapped"><span class="citation-tooltip-multi-key">[${escapeHtml(refKeys[0])}]</span> <span style="color:var(--text-muted,#94a3b8)">(참고문헌 세부정보가 없습니다. 아래 Google Scholar 검색을 이용하세요)</span></div>`
   }
   return refKeys
     .map(k => {
-      const text = refMap[k]
+      const text = getCitationRefText(k, refMap)
       return `<div class="citation-tooltip-multi-item"><span class="citation-tooltip-multi-key">[${escapeHtml(k)}]</span> ${text ? renderBoldText(text) : '<span style="color:var(--text-muted,#94a3b8)">(원문 정보 없음)</span>'}</div>`
     })
     .join('\n')
 }
 
-function showCitationTooltip(docId, refKeys, refMap, boxEl, { focus = false, pinned = false } = {}) {
+function showCitationTooltip(docId, refKeys, refMap, boxEl, { focus = false, pinned = false, targetPage = null, targetYPct = null } = {}) {
   // 텍스트 드래그 선택 중에 마우스가 마커 박스 위를 스쳐 지나가도(mouseenter)
   // 미리보기가 뜨지 않도록 막는다 - 다른 호버 오버레이들과 동일한 가드.
   if (state.isSelectionDragging) return
   if (!pinned && Date.now() - citationTooltipClosedAt < 350) return
   if (citationTooltipHideTimer) { clearTimeout(citationTooltipHideTimer); citationTooltipHideTimer = null }
   if (citationTooltipBoxEl && citationTooltipBoxEl !== boxEl) citationTooltipBoxEl.setAttribute('aria-expanded', 'false')
-  citationTooltipDocId = docId
-  citationTooltipReferences = refKeys.map(key => ({ key, text: refMap[key] || '' }))
+  citationTooltipReferences = refKeys.map(key => ({ key, text: getCitationRefText(key, refMap) }))
   citationTooltipBoxEl = boxEl
   if (pinned) citationTooltipIsPinned = true
   boxEl?.setAttribute('aria-expanded', 'true')
 
   const tooltip = getOrCreateCitationTooltip()
   tooltip.querySelector('.citation-tooltip-text').innerHTML = buildCitationTooltipHtml(refKeys, refMap)
-  const resultEl = tooltip.querySelector('.citation-tooltip-result')
-  resultEl.className = 'citation-tooltip-result hidden'
-  resultEl.innerHTML = ''
   const scholarResultsEl = tooltip.querySelector('.citation-tooltip-scholar-results')
   scholarResultsEl.className = 'citation-tooltip-scholar-results hidden'
   scholarResultsEl.innerHTML = ''
-  const resolveBtn = tooltip.querySelector('.citation-tooltip-resolve-btn')
-  resolveBtn.disabled = false
-  resolveBtn.innerHTML = `${icon('search', 11, 'style="vertical-align:-1px;margin-right:3px"')}원문 링크 찾기`
   const scholarBtn = tooltip.querySelector('.citation-tooltip-scholar-btn')
   const scholarLabel = refKeys.length > 1 ? 'Google Scholar 개별 검색' : 'Google Scholar 검색'
   scholarBtn.innerHTML = `${icon('externalLink', 11, 'style="vertical-align:-1px;margin-right:3px"')}${scholarLabel}`
 
   const jumpBtn = tooltip.querySelector('.citation-tooltip-jump-btn')
   if (jumpBtn) {
-    if (state.referencesHeaderPageNum) {
+    const pageToJump = targetPage || state.referencesHeaderPageNum
+    if (pageToJump) {
       jumpBtn.style.display = 'inline-flex'
-      jumpBtn.innerHTML = `${icon('externalLink', 11, 'style="vertical-align:-1px;margin-right:3px"')}참고문헌 목록(p.${state.referencesHeaderPageNum})으로 이동`
+      jumpBtn.innerHTML = `${icon('externalLink', 11, 'style="vertical-align:-1px;margin-right:3px"')}참고문헌(p.${pageToJump})으로 이동`
       jumpBtn.onclick = (e) => {
         e.stopPropagation()
-        scrollToPage(viewerScrollContainer, state.referencesHeaderPageNum)
+        recordJumpHistory(pageToJump)
+        hideCitationTooltip()
+        scrollToPage(viewerScrollContainer, pageToJump, { instant: false, yPct: targetYPct })
+        if (typeof targetYPct === 'number') {
+          setTimeout(() => {
+            const targetPw = viewerScrollContainer.querySelector(`.pdf-page-wrapper[data-page="${pageToJump}"]`)
+            if (targetPw) {
+              const ov = getOrCreateOverlay(targetPw)
+              const pulseBox = document.createElement('div')
+              pulseBox.className = 'sentence-pulse-box'
+              pulseBox.style.left = '5%'
+              pulseBox.style.width = '90%'
+              pulseBox.style.top = `${Math.max(0, targetYPct - 2)}%`
+              pulseBox.style.height = '48px'
+              ov.appendChild(pulseBox)
+              setTimeout(() => pulseBox.remove(), 2500)
+            }
+          }, 450)
+        }
       }
     } else {
       jumpBtn.style.display = 'none'
@@ -14696,64 +14950,6 @@ function scheduleCitationTooltipHide() {
   if (citationTooltipIsPinned) return
   if (citationTooltipHideTimer) clearTimeout(citationTooltipHideTimer)
   citationTooltipHideTimer = setTimeout(hideCitationTooltip, 220)
-}
-
-async function resolveCitationTooltip() {
-  if (!citationTooltipEl || !citationTooltipDocId || !citationTooltipReferences.length) return
-  const resolveBtn = citationTooltipEl.querySelector('.citation-tooltip-resolve-btn')
-  const resultEl = citationTooltipEl.querySelector('.citation-tooltip-result')
-  if (resolveBtn.disabled) return
-
-  const requestedDocId = citationTooltipDocId
-  const requestedRefs = citationTooltipReferences.map(ref => ({ ...ref }))
-  const isCurrentRequest = () => citationTooltipDocId === requestedDocId &&
-    citationTooltipReferences.map(ref => ref.key).join('\u0000') === requestedRefs.map(ref => ref.key).join('\u0000')
-
-  resolveBtn.disabled = true
-  resolveBtn.innerHTML = `${icon('refreshCw', 11, 'style="vertical-align:-1px;margin-right:3px"')}찾는 중...`
-
-  try {
-    const results = await Promise.all(requestedRefs.map(async ref => {
-      try {
-        return { ...ref, result: await resolveLibraryReference(requestedDocId, ref.key) }
-      } catch (error) {
-        console.warn(`참고문헌 [${ref.key}] 조회 실패:`, error)
-        return { ...ref, result: null, error: true }
-      }
-    }))
-
-    if (!isCurrentRequest()) return
-
-    const successes = results.filter(item => item.result && item.result.url)
-    if (requestedRefs.length === 1 && successes.length) {
-      const result = successes[0].result
-      resultEl.className = 'citation-tooltip-result'
-      const label = result.title ? `${result.title}${result.year ? ` (${result.year})` : ''}` : result.url
-      resultEl.innerHTML = `<a href="${escapeHtml(result.url)}" target="_blank" rel="noopener">${icon('externalLink', 12, 'style="vertical-align:-2px;margin-right:4px;flex-shrink:0"')}<span>${escapeHtml(label)}</span></a>`
-    } else if (requestedRefs.length > 1) {
-      resultEl.className = `citation-tooltip-result${successes.length ? '' : ' citation-tooltip-result-empty'}`
-      resultEl.innerHTML = results.map(({ key, result, error }) => {
-        if (result && result.url) {
-          const label = result.title ? `${result.title}${result.year ? ` (${result.year})` : ''}` : result.url
-          return `<div class="citation-tooltip-result-item"><span class="citation-tooltip-multi-key">[${escapeHtml(key)}]</span><a href="${escapeHtml(result.url)}" target="_blank" rel="noopener">${icon('externalLink', 12, 'style="vertical-align:-2px;margin-right:4px;flex-shrink:0"')}<span>${escapeHtml(label)}</span></a></div>`
-        }
-        const message = error ? '조회 중 오류가 발생했습니다.' : '원문 링크를 찾지 못했습니다.'
-        return `<div class="citation-tooltip-result-item citation-tooltip-result-empty"><span class="citation-tooltip-multi-key">[${escapeHtml(key)}]</span><span>${message}</span></div>`
-      }).join('')
-    } else {
-      resultEl.className = 'citation-tooltip-result citation-tooltip-result-empty'
-      resultEl.textContent = '원문 링크를 찾지 못했습니다. Google Scholar 검색을 이용해보세요.'
-    }
-  } catch (e) {
-    console.warn('참고문헌 조회 실패:', e)
-    resultEl.className = 'citation-tooltip-result citation-tooltip-result-empty'
-    resultEl.textContent = '조회 중 오류가 발생했습니다.'
-  } finally {
-    if (!isCurrentRequest()) return
-    resolveBtn.disabled = false
-    resolveBtn.innerHTML = `${icon('search', 11, 'style="vertical-align:-1px;margin-right:3px"')}다시 찾기`
-    positionCitationTooltip()
-  }
 }
 
 // PDF 스크롤 중에는 인용 박스와 툴팁의 상대 위치가 계속 바뀌므로,
@@ -16262,218 +16458,6 @@ function segmentElementIntoSentences(container, pageNum, className) {
   } else {
     segmentTransElements(container, pageNum);
   }
-}
-
-
-
-// 주어진 텍스트에서 원문 문장들의 정확한 문자 범위(start, end)를 유니코드 인지 방식으로 추출하여 매핑합니다.
-function alignSentencesToText(fullText, sentencesList, pageNum = '?') {
-  const cleanToRaw = [];
-  let cleanText = '';
-
-  for (let i = 0; i < fullText.length; i++) {
-    const char = fullText[i];
-    // 알파벳, 숫자, 한글, 한자 및 그리스 문자(수식 기호 대응)만 비교 대상으로 삼음
-    if (/[a-zA-Z0-9\u3131-\uD79D\u4e00-\u9fff\u0370-\u03ff]/.test(char)) {
-      cleanToRaw.push(i);
-      cleanText += char.toLowerCase();
-    }
-  }
-
-  const sentenceRanges = [];
-  let searchStart = 0;
-
-  // 모든 문장 미리 전처리 - null/undefined 방어, LaTeX 명령어 제거 및 그리스 문자 대응
-  const GREEK_MAP = {
-    'alpha': 'α', 'beta': 'β', 'gamma': 'γ', 'delta': 'δ', 'epsilon': 'ε',
-    'zeta': 'ζ', 'eta': 'η', 'theta': 'θ', 'iota': 'ι', 'kappa': 'κ',
-    'lambda': 'λ', 'mu': 'μ', 'nu': 'ν', 'xi': 'ξ', 'pi': 'π',
-    'rho': 'ρ', 'sigma': 'σ', 'tau': 'τ', 'upsilon': 'υ', 'phi': 'φ',
-    'chi': 'χ', 'psi': 'ψ', 'omega': 'ω'
-  };
-
-  const cleanSents = (sentencesList || []).map(s => {
-    let text = s || '';
-
-    // LaTeX 그리스 문자 명령어를 유니코드 문자로 변환
-    for (const [name, unicode] of Object.entries(GREEK_MAP)) {
-      text = text.replace(new RegExp('\\\\' + name, 'g'), unicode);
-    }
-
-    // 기타 백슬래시로 시작하는 LaTeX 명령어 제거 (예: \sum, \int 등)
-    text = text.replace(/\\[a-zA-Z]+/g, '');
-
-    let clean = '';
-    for (let i = 0; i < text.length; i++) {
-      const char = text[i];
-      if (/[a-zA-Z0-9\u3131-\uD79D\u4e00-\u9fff\u0370-\u03ff]/.test(char)) {
-        clean += char.toLowerCase();
-      }
-    }
-    return clean;
-  });
-
-  for (let k = 0; k < cleanSents.length; k++) {
-    const cleanSent = cleanSents[k];
-    const sText = sentencesList[k] || '';
-
-    if (!cleanSent) {
-      const rawPos = cleanToRaw[searchStart] ?? (cleanToRaw[cleanToRaw.length - 1] ?? 0);
-      sentenceRanges.push({
-        text: sText,
-        start: rawPos,
-        end: rawPos
-      });
-      continue;
-    }
-
-    // 1. 순차 검색 시도 (가장 최선)
-    let idx = cleanText.indexOf(cleanSent, searchStart);
-
-    // 2. 접두어 기반 검색 시도 (사소한 문자 오차 해결) - searchStart 이후에서만 찾는다.
-    // 예전에는 이 단계에서 실패하면 fromIndex 없이(처음부터) 다시 검색하는 "전역
-    // 폴백"이 있었는데, indexOf(x, searchStart)가 이미 -1을 반환한 상태에서
-    // indexOf(x)(전체 검색)가 뭔가를 찾는다면 그 위치는 수학적으로 반드시
-    // searchStart보다 앞쪽일 수밖에 없다(그렇지 않다면 위 순차 검색이 이미 찾았을
-    // 것이므로). 즉 이 전역 폴백은 실행될 때마다 예외 없이 직전 문장이 이미 차지한
-    // 구간을 다시 가리켜, 인접한 두 문장의 하이라이트가 겹치는 버그로 항상 이어졌다.
-    // 실패한 문장은 대신 아래 Gap Partitioning이 겹치지 않게 처리하도록 둔다.
-    if (idx === -1) {
-      const prefix = cleanSent.substring(0, Math.min(15, cleanSent.length));
-      idx = cleanText.indexOf(prefix, searchStart);
-    }
-
-    // 3. 비순차 블록(본문 끝단으로 재배치된 표/그림 캡션 등) 무충돌 전역 검색
-    let isOutOfOrder = false;
-    if (idx === -1 && cleanSent.length >= 15) {
-      let candIdx = cleanText.indexOf(cleanSent);
-      if (candIdx === -1 && cleanSent.length >= 25) {
-        candIdx = cleanText.indexOf(cleanSent.substring(0, 25));
-      }
-      if (candIdx !== -1) {
-        const candRawStart = cleanToRaw[candIdx] ?? 0;
-        const candLastIdx = Math.min(cleanText.length, candIdx + cleanSent.length) - 1;
-        const candRawEnd = (cleanToRaw[candLastIdx] !== undefined) ? cleanToRaw[candLastIdx] + 1 : fullText.length;
-        // 기존 매칭된 문장 범위와 충돌(오버랩)하는지 검사
-        const overlaps = sentenceRanges.some(r => r.end > r.start && Math.max(candRawStart, r.start) < Math.min(candRawEnd, r.end));
-        if (!overlaps) {
-          idx = candIdx;
-          isOutOfOrder = true;
-        }
-      }
-    }
-
-    if (idx !== -1) {
-      const cleanStart = idx;
-      const cleanEnd = Math.min(cleanText.length, idx + cleanSent.length);
-      const rawStart = cleanToRaw[cleanStart] ?? (cleanToRaw[cleanToRaw.length - 1] ?? 0);
-      const lastCleanIdx = cleanEnd - 1;
-      const rawEnd = (cleanToRaw[lastCleanIdx] !== undefined)
-        ? cleanToRaw[lastCleanIdx] + 1
-        : (cleanToRaw[cleanToRaw.length - 1] ?? fullText.length);
-
-      sentenceRanges.push({
-        text: fullText.substring(rawStart, rawEnd),
-        start: rawStart,
-        end: rawEnd
-      });
-
-      // 순방향 매칭일 때만 순차 포인터 전진 (비순차 캡션에 의해 본문 포인터가 교란되지 않도록 방지)
-      if (!isOutOfOrder && cleanEnd > searchStart) {
-        searchStart = cleanEnd;
-      }
-    } else {
-      // 매칭 실패 폴백
-      console.warn(`[alignSentencesToText] Failed to match sentence on page ${pageNum}:`, sText);
-      const rawPos = cleanToRaw[searchStart] ?? (cleanToRaw[cleanToRaw.length - 1] ?? 0);
-      sentenceRanges.push({
-        text: sText,
-        start: rawPos,
-        end: rawPos
-      });
-    }
-  }
-
-  // 매칭 실패(길이 0)인 문장들의 범위를 주변 매칭 성공 문장들 사이의 간격으로 분할 보간(Gap Partitioning)
-  // 수식 등의 기호만 있는 문장들이 누락 없이 서로 겹치지 않고 PDF 텍스트 레이어에 균등 분할 마킹되도록 지원.
-  //
-  // 실패한 문장들 사이의 간격을 "개수로 균등 분할"하면 위험하다 - 그림 캡션처럼 원문
-  // 추출 텍스트와 번역 문장 목록이 잘 안 맞는 구간에서 매칭이 연쇄적으로 실패하면,
-  // prevEnd와 nextStart 사이의 간격이 그림이 차지하는 공백이나 전혀 무관한 다른
-  // 단락까지 포함할 정도로 커질 수 있다(실측: 캡션 문장 하나가 수백 자 떨어진 다른
-  // 컬럼의 무관한 문단까지 하이라이트로 끌어옴). 그 큰 간격을 실패한 문장 "개수"로만
-  // 나누면 문장의 실제 길이와 무관하게 넓은 범위가 배정되므로, 대신 (1) 각 문장
-  // 원문(sText) 길이 비율로 나누고, (2) 간격이 실패한 문장들의 원문 길이 합보다
-  // 비정상적으로 크면(그림 등으로 인한 진짜 공백일 가능성) 간격 전체를 억지로 채우지
-  // 않고 prevEnd부터 필요한 만큼만 촘촘히 배정한 뒤 나머지는 어느 문장에도 배정하지
-  // 않고 비워 둔다.
-  const GAP_SAFETY_MULTIPLIER = 2.5;
-  let walkIdx = 0;
-  while (walkIdx < sentenceRanges.length) {
-    if (sentenceRanges[walkIdx].start === sentenceRanges[walkIdx].end) {
-      let k_start = walkIdx;
-      let k_end = walkIdx;
-      while (k_end + 1 < sentenceRanges.length && sentenceRanges[k_end + 1].start === sentenceRanges[k_end + 1].end) {
-        k_end++;
-      }
-
-      let prevEnd = 0;
-      for (let i = k_start - 1; i >= 0; i--) {
-        if (sentenceRanges[i].end > sentenceRanges[i].start) {
-          prevEnd = sentenceRanges[i].end;
-          break;
-        }
-      }
-
-      let nextStart = fullText.length;
-      for (let i = k_end + 1; i < sentenceRanges.length; i++) {
-        if (sentenceRanges[i].end > sentenceRanges[i].start) {
-          nextStart = sentenceRanges[i].start;
-          break;
-        }
-      }
-
-      if (prevEnd < nextStart) {
-        const gapSize = nextStart - prevEnd;
-        const lens = [];
-        let totalLen = 0;
-        for (let i = k_start; i <= k_end; i++) {
-          const len = Math.max(1, (sentenceRanges[i].text || '').length);
-          lens.push(len);
-          totalLen += len;
-        }
-        const usedGap = Math.min(gapSize, totalLen * GAP_SAFETY_MULTIPLIER);
-        let cursor = prevEnd;
-        for (let idx = 0; idx < lens.length; idx++) {
-          const i = k_start + idx;
-          const share = Math.round((lens[idx] / totalLen) * usedGap);
-          sentenceRanges[i].start = cursor;
-          sentenceRanges[i].end = Math.min(nextStart, cursor + share);
-          cursor = sentenceRanges[i].end;
-        }
-      }
-
-      walkIdx = k_end + 1;
-    } else {
-      walkIdx++;
-    }
-  }
-
-  // 최종 안전장치: 인접한 두 문장의 범위가 여전히 겹치면(접두어 폴백이 원문
-  // 오차로 실제보다 넓게 잡거나, 위 두 보정 단계가 손대지 않는 경계에서 우연히
-  // 겹치는 경우) 겹친 구간의 중간 지점에서 서로 맞닿도록 잘라 겹침을 제거한다.
-  // 어느 한쪽이 항상 옳다고 볼 근거가 없으므로 중간 지점에서 공평하게 나눈다.
-  for (let i = 1; i < sentenceRanges.length; i++) {
-    const prev = sentenceRanges[i - 1];
-    const cur = sentenceRanges[i];
-    if (cur.start < prev.end) {
-      const mid = Math.floor((cur.start + prev.end) / 2);
-      prev.end = Math.max(prev.start, mid);
-      cur.start = Math.min(cur.end, mid);
-    }
-  }
-
-  return sentenceRanges;
 }
 
 // ── PDF 텍스트 레이어 비파괴 가상 오버레이 기반 문장 매핑 시스템 ───────────────
@@ -18185,14 +18169,34 @@ if (viewerScrollContainer) {
           const kind = interactiveRef.dataset.kind;
           const num = interactiveRef.dataset.num;
           const images = state.documentImages || [];
-          const target = images.find(img => img.label === `${kind} ${num}`);
-          if (target) {
-            showFigurePreviewTooltip([target], interactiveRef);
+          const numbers = typeof parseFigureTableNumberList === 'function' ? parseFigureTableNumberList(num) : [];
+          const numList = numbers.length > 0 ? numbers : [num];
+          const targets = numList
+            .map(n => images.find(img => img.label === `${kind} ${n}` || img.label === `${kind} ${n.replace(/[A-Za-z]+$/, '')}`))
+            .filter(Boolean);
+          if (targets.length > 0) {
+            showFigurePreviewTooltip(targets, interactiveRef);
           }
         } else if (refType === 'citation') {
           const rawKey = interactiveRef.dataset.refKey;
           const keys = rawKey.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean);
-          showCitationTooltip(state.currentDocId, keys, state.referenceMap || {}, interactiveRef);
+          let linkTargetPage = null;
+          let linkTargetYPct = null;
+          if (state.pdfInternalLinks && keys.length) {
+            const firstKey = keys[0];
+            for (const [p, pLinks] of Object.entries(state.pdfInternalLinks)) {
+              const matched = pLinks.find(l => l.dest_type === 'reference' && (l.text === firstKey || (l.text || '').includes(firstKey)));
+              if (matched && matched.target_page) {
+                linkTargetPage = matched.target_page;
+                linkTargetYPct = matched.dest_y_pct;
+                break;
+              }
+            }
+          }
+          showCitationTooltip(state.currentDocId, keys, state.referenceMap || {}, interactiveRef, {
+            targetPage: linkTargetPage,
+            targetYPct: linkTargetYPct,
+          });
         }
       }
 
@@ -18401,9 +18405,29 @@ if (viewerScrollContainer) {
           const kind = interactiveRef.dataset.kind;
           const num = interactiveRef.dataset.num;
           const images = state.documentImages || [];
-          const target = images.find(img => img.label === `${kind} ${num}`);
-          if (target) {
-            showFigurePreviewTooltip([target], interactiveRef, { focus: true, pinned: true });
+          const numbers = typeof parseFigureTableNumberList === 'function' ? parseFigureTableNumberList(num) : [];
+          const numList = numbers.length > 0 ? numbers : [num];
+          const targets = numList
+            .map(n => images.find(img => img.label === `${kind} ${n}` || img.label === `${kind} ${num.replace(/[A-Za-z]+$/, '')}`))
+            .filter(Boolean);
+          if (targets.length > 0) {
+            showFigurePreviewTooltip(targets, interactiveRef, { focus: true, pinned: true });
+          } else if (state.pdfInternalLinks) {
+            const probeList = numList.map(n => ({ probe: `${kind} ${n}`.toLowerCase(), baseProbe: n.toLowerCase() }));
+            for (const [p, pLinks] of Object.entries(state.pdfInternalLinks)) {
+              const matchedLink = pLinks.find(l => {
+                const lt = (l.text || '').toLowerCase();
+                const dt = (l.dest_text || '').toLowerCase();
+                return probeList.some(({ probe, baseProbe }) =>
+                  lt.includes(probe) || dt.includes(probe) || (lt.includes(baseProbe) && (l.dest_type === 'figure' || l.dest_type === 'table' || l.dest_type === 'equation'))
+                );
+              });
+              if (matchedLink && matchedLink.target_page) {
+                recordJumpHistory(matchedLink.target_page);
+                scrollToPage(viewerScrollContainer, matchedLink.target_page, { instant: false, yPct: matchedLink.dest_y_pct });
+                break;
+              }
+            }
           }
         } else if (refType === 'citation') {
           if (citationTooltipEl && !citationTooltipEl.classList.contains('hidden') && citationTooltipBoxEl === interactiveRef) {
@@ -18412,7 +18436,25 @@ if (viewerScrollContainer) {
           }
           const rawKey = interactiveRef.dataset.refKey;
           const keys = rawKey.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean);
-          showCitationTooltip(state.currentDocId, keys, state.referenceMap || {}, interactiveRef, { focus: true, pinned: true });
+          let linkTargetPage = null;
+          let linkTargetYPct = null;
+          if (state.pdfInternalLinks && keys.length) {
+            const firstKey = keys[0];
+            for (const [p, pLinks] of Object.entries(state.pdfInternalLinks)) {
+              const matched = pLinks.find(l => l.dest_type === 'reference' && (l.text === firstKey || (l.text || '').includes(firstKey)));
+              if (matched && matched.target_page) {
+                linkTargetPage = matched.target_page;
+                linkTargetYPct = matched.dest_y_pct;
+                break;
+              }
+            }
+          }
+          showCitationTooltip(state.currentDocId, keys, state.referenceMap || {}, interactiveRef, {
+            focus: true,
+            pinned: true,
+            targetPage: linkTargetPage,
+            targetYPct: linkTargetYPct,
+          });
         }
         return;
       }

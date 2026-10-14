@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { formatMarkdownLatexHtml, linkPageCitations } from '../src/textFormat.js'
+import { formatMarkdownLatexHtml, formatTranslationHtml, linkPageCitations } from '../src/textFormat.js'
 import { prepareMemoMarkdown } from '../src/memoMarkdown.js'
 
 const passthrough = html => html
@@ -37,6 +37,29 @@ test('KaTeX가 아직 없으면 나중에 처리할 pending 수식을 만든다'
 
   assert.match(html, /class="math-pending"/)
   assert.match(html, /data-formula="a%2Bb"/)
+})
+
+test('번호가 붙은 블록 수식은 전체 행 폭 레이아웃용 클래스를 가진다', () => {
+  const previousWindow = globalThis.window
+  globalThis.window = {
+    katex: {
+      renderToString(formula) {
+        return `<math>${formula}</math>`
+      },
+    },
+  }
+  try {
+    const numbered = formatTranslationHtml('$$x^2\\tag{Eqn 1}$$')
+    const starred = formatTranslationHtml('$$y\\tag*{2}$$')
+    const unnumbered = formatTranslationHtml('$$z^2$$')
+
+    assert.match(numbered, /class="katex-display-wrap katex-display-numbered"/)
+    assert.match(starred, /class="katex-display-wrap katex-display-numbered"/)
+    assert.doesNotMatch(unnumbered, /katex-display-numbered/)
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window
+    else globalThis.window = previousWindow
+  }
 })
 
 test('Markdown 결과를 수식 삽입 전에 sanitizer로 정제한다', () => {
@@ -91,3 +114,17 @@ test('코드 블록 안의 콜아웃 문법은 변환하지 않는다', () => {
   assert.match(prepared, /```md\n> \[!NOTE\] 예시\n```/)
   assert.match(prepared, /data-callout="tip"/)
 })
+
+test('번역 텍스트의 <sup> 및 <sub> 태그를 안전한 HTML 윗첨자/아래첨자로 변환한다', () => {
+  const rendered = formatTranslationHtml('면적은 100 km<sup>2</sup>이고 화학식은 H<sub>2</sub>O이며 저자 소속은 Silva<sup>1,5</sup>이다.')
+  assert.match(rendered, /km<sup>2<\/sup>/)
+  assert.match(rendered, /H<sub>2<\/sub>O/)
+  assert.match(rendered, /Silva<sup>1,5<\/sup>/)
+})
+
+test('첨자 내부의 스크립트 태그는 이스케이프 상태를 유지한다 (XSS 방지)', () => {
+  const rendered = formatTranslationHtml('테스트<sup><script>alert(1)</script></sup>')
+  assert.match(rendered, /<sup>&lt;script&gt;alert\(1\)&lt;\/script&gt;<\/sup>/)
+  assert.doesNotMatch(rendered, /<script>/)
+})
+

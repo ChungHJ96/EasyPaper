@@ -7,10 +7,7 @@ from typing import Optional, List, Dict, Any, Tuple
 
 # DB_PATH 환경변수가 있으면 그대로 쓰고(Docker 등에서 데이터 볼륨 경로로
 # 지정), 없으면 기존과 동일하게 backend/의 부모 기준 경로를 그대로 쓴다.
-DB_PATH = os.getenv("DB_PATH") or (
-    os.path.join(os.getenv("HJPAPER_CONFIG_DIR"), "hjpaper.db") if os.getenv("HJPAPER_CONFIG_DIR")
-    else os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hjpaper.db")
-)
+DB_PATH = os.getenv("DB_PATH") or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hjpaper.db")
 
 def get_db():
     # busy_timeout: 번역 잡이 쓰기 커넥션을 잡고 있는 동안(db_save_translation)
@@ -659,10 +656,20 @@ def init_db():
             onboarding_version INTEGER NOT NULL DEFAULT 0,
             preferred_workspace_mode TEXT,
             document_type_options TEXT,
+            theme TEXT,
+            accent_color TEXT,
             updated_at TEXT NOT NULL,
             FOREIGN KEY (username) REFERENCES users(username) ON DELETE CASCADE ON UPDATE CASCADE
         )
         """)
+        try:
+            cursor.execute("ALTER TABLE user_workspace_settings ADD COLUMN theme TEXT")
+        except Exception:
+            pass
+        try:
+            cursor.execute("ALTER TABLE user_workspace_settings ADD COLUMN accent_color TEXT")
+        except Exception:
+            pass
         cursor.execute(
             """INSERT OR IGNORE INTO user_workspace_settings
                (username, onboarding_version, preferred_workspace_mode, document_type_options, updated_at)
@@ -1625,11 +1632,11 @@ def db_update_document_classification_recommendation(doc_id: str, status: str, r
 def db_get_workspace_settings(username: str) -> dict:
     with get_db() as conn:
         row = conn.execute(
-            "SELECT onboarding_version, preferred_workspace_mode, document_type_options, updated_at FROM user_workspace_settings WHERE username = ?",
+            "SELECT onboarding_version, preferred_workspace_mode, document_type_options, theme, accent_color, updated_at FROM user_workspace_settings WHERE username = ?",
             (username,),
         ).fetchone()
     if not row:
-        return {"onboarding_version": 0, "preferred_workspace_mode": None, "document_type_options": {}, "updated_at": None}
+        return {"onboarding_version": 0, "preferred_workspace_mode": None, "document_type_options": {}, "theme": None, "accent_color": None, "updated_at": None}
     data = dict(row)
     try:
         data["document_type_options"] = json.loads(data["document_type_options"] or "{}")
@@ -1638,20 +1645,29 @@ def db_get_workspace_settings(username: str) -> dict:
     return data
 
 
-def db_upsert_workspace_settings(username: str, onboarding_version: int, preferred_workspace_mode: Optional[str], document_type_options: dict) -> dict:
+def db_upsert_workspace_settings(
+    username: str,
+    onboarding_version: int,
+    preferred_workspace_mode: Optional[str],
+    document_type_options: dict,
+    theme: Optional[str] = None,
+    accent_color: Optional[str] = None,
+) -> dict:
     now = datetime.now(timezone.utc).isoformat()
     options_json = json.dumps(document_type_options, ensure_ascii=False)
     with get_db() as conn:
         conn.execute(
             """INSERT INTO user_workspace_settings
-               (username, onboarding_version, preferred_workspace_mode, document_type_options, updated_at)
-               VALUES (?, ?, ?, ?, ?)
+               (username, onboarding_version, preferred_workspace_mode, document_type_options, theme, accent_color, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(username) DO UPDATE SET
                  onboarding_version = excluded.onboarding_version,
                  preferred_workspace_mode = excluded.preferred_workspace_mode,
                  document_type_options = excluded.document_type_options,
+                 theme = COALESCE(excluded.theme, user_workspace_settings.theme),
+                 accent_color = COALESCE(excluded.accent_color, user_workspace_settings.accent_color),
                  updated_at = excluded.updated_at""",
-            (username, onboarding_version, preferred_workspace_mode, options_json, now),
+            (username, onboarding_version, preferred_workspace_mode, options_json, theme, accent_color, now),
         )
         conn.commit()
     return db_get_workspace_settings(username)

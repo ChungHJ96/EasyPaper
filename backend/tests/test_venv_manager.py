@@ -76,7 +76,7 @@ def test_packaged_desktop_installs_outside_read_only_bundle(tmp_path, monkeypatc
     assert venv_manager.is_packaged_desktop() is True
     assert command == [
         sys.executable,
-        "--easypaper-install-pdf-parser",
+        venv_manager._PACKAGED_INSTALL_ARG,
         "marker",
     ]
     assert venv_manager.parser_packages_dir("marker") == str(

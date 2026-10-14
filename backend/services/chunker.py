@@ -252,6 +252,18 @@ def get_page_body_blocks(page: dict) -> List[dict]:
     return body_blocks
 
 
+_HEADING_OR_LABEL_RE = re.compile(
+    r'^(?:'
+    r'(?:TABLE|FIGURE|FIG\.|TAB\.|Section)\b'
+    r'|[A-Z0-9\s:\-—]{3,}$'
+    r'|#+\s*'
+    r'|(?:\d+\.|\d+\.\d+|[IVXLCDM]+\.)\s+[A-Za-z]'
+    r'|(?:INTRODUCTION|ABSTRACT|METHODS|MATERIALS\s+AND\s+METHODS|RESULTS|DISCUSSION|CONCLUSION|REFERENCES|ACKNOWLEDGMENTS|SUPPLEMENTARY\s+MATERIAL|APPENDIX)\b'
+    r')',
+    re.IGNORECASE,
+)
+
+
 def get_cross_page_continuation(prev_page: Optional[dict], next_page: Optional[dict]) -> Optional[dict]:
     """
     이전 페이지와 다음 페이지 사이에 걸쳐 있는 미완성 문장이 있는지 감지하고,
@@ -282,8 +294,12 @@ def get_cross_page_continuation(prev_page: Optional[dict], next_page: Optional[d
     if has_terminal:
         return None
 
-    # 2. 다음 페이지 첫머리가 섹션 제목이나 표/그림 라벨이면 문장 연결이 아님
-    if re.match(r'^(?:TABLE|FIGURE|FIG\.|TAB\.|Section|\d+\.)', head_sent, re.IGNORECASE) or re.match(r'^[A-Z0-9\s:\-—]{4,}$', head_sent):
+    # 2. 이전 페이지 마지막 문장이 섹션 제목(Heading)이나 표/그림 라벨이면 문장 연결이 아님
+    if _HEADING_OR_LABEL_RE.match(tail_sent):
+        return None
+
+    # 3. 다음 페이지 첫머리가 섹션 제목이나 표/그림 라벨이면 문장 연결이 아님
+    if _HEADING_OR_LABEL_RE.match(head_sent):
         return None
 
     # 3. 연결 조건:

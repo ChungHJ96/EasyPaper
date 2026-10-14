@@ -58,20 +58,50 @@ async def execute_parse_task(
         update_task(task_id, status="failed", last_error_code="parse_source_missing")
         raise
 
-    if metadata_reader is None or page_extractor is None:
-        from services.pdf_parser import extract_pages, get_pdf_metadata
-        metadata_reader = metadata_reader or get_pdf_metadata
-        page_extractor = page_extractor or extract_pages
+    from services.pdf_parser import extract_pages, get_pdf_metadata
+    metadata_reader = metadata_reader or get_pdf_metadata
+
+    try:
+        from config import get_pdf_parser_engine
+        configured_engine = (options.get("parser_engine") or get_pdf_parser_engine() or "mineru").lower().strip()
+    except Exception:
+        configured_engine = "mineru"
 
     update_task(
         task_id, status="running", last_error_code=None,
         next_retry_at=None, increment_attempt=True,
     )
+    isolated_images = None
+    is_default_extractor = (page_extractor is None) or (page_extractor is extract_pages)
     try:
-        metadata, pages = await asyncio.gather(
-            asyncio.to_thread(metadata_reader, pdf_path),
-            asyncio.to_thread(page_extractor, pdf_path),
-        )
+        if not is_default_extractor:
+            metadata, pages = await asyncio.gather(
+                asyncio.to_thread(metadata_reader, pdf_path),
+                asyncio.to_thread(page_extractor, pdf_path),
+            )
+        elif configured_engine in {"marker", "mineru"}:
+            from services.reparse import parse_document_isolated
+            try:
+                metadata = await asyncio.to_thread(metadata_reader, pdf_path)
+                payload = await asyncio.to_thread(parse_document_isolated, pdf_path, configured_engine)
+                pages = payload["pages"]
+                isolated_images = payload.get("images") or []
+            except Exception as exc:
+                import logging
+                logging.getLogger("hjpaper").warning(
+                    "Isolated parser %s failed in parse task for %s: %s; falling back to pymupdf",
+                    configured_engine, pdf_path, exc,
+                )
+                metadata, pages = await asyncio.gather(
+                    asyncio.to_thread(metadata_reader, pdf_path),
+                    asyncio.to_thread(extract_pages, pdf_path, engine="pymupdf"),
+                )
+                isolated_images = None
+        else:
+            metadata, pages = await asyncio.gather(
+                asyncio.to_thread(metadata_reader, pdf_path),
+                asyncio.to_thread(extract_pages, pdf_path, engine=configured_engine),
+            )
         if not isinstance(pages, list):
             raise ValueError("invalid_parser_output")
     except asyncio.CancelledError:
@@ -128,10 +158,13 @@ async def execute_parse_task(
         )
         detected_images = []
         try:
-            from services.pdf_parser import extract_pdf_images
-            detected_images = await asyncio.to_thread(
-                extract_pdf_images, persistent_pdf_path, active_parser_engine,
-            )
+            if isolated_images is not None and active_parser_engine == configured_engine:
+                detected_images = isolated_images
+            else:
+                from services.pdf_parser import extract_pdf_images
+                detected_images = await asyncio.to_thread(
+                    extract_pdf_images, persistent_pdf_path, active_parser_engine,
+                )
             save_images_cache(
                 doc_id, persistent_pdf_path, detected_images,
                 active_parser_engine, active_parser_version, strict=True,

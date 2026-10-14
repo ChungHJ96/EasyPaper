@@ -240,7 +240,7 @@
     "description": "Confirm"
   },
   "onboarding:purpose.heading": {
-    "description": "How will you use EasyPaper?"
+    "description": "How will you use HJPaper?"
   },
   "onboarding:purpose.help": {
     "description": "This only sets the default workspace and does not classify documents automatically. You can change it from the sidebar at any time."
@@ -3710,6 +3710,15 @@
   "viewer:goToPage": {
     "description": "PDF viewer outline or page navigation label."
   },
+  "viewer:navigation.jumpBack": {
+    "description": "Floating pill action label to jump back to previous reading position"
+  },
+  "viewer:navigation.jumpBackShort": {
+    "description": "Short label for previous reading position"
+  },
+  "viewer:navigation.jumpBackAria": {
+    "description": "Accessibility and tooltip label to jump back to previous reading position"
+  },
   "common:legacy.ui.1097": {
     "description": "Shared runtime-composed interface text."
   },
@@ -3893,15 +3902,6 @@
   "library:reparse.menu": {
     "description": "PDF parsing diagnostics and candidate reparse UI."
   },
-  "library:reparse.selectTitle": {
-    "description": "PDF parsing diagnostics and candidate reparse UI."
-  },
-  "library:reparse.selectLabel": {
-    "description": "PDF parsing diagnostics and candidate reparse UI."
-  },
-  "library:reparse.start": {
-    "description": "PDF parsing diagnostics and candidate reparse UI."
-  },
   "library:reparse.running": {
     "description": "PDF parsing diagnostics and candidate reparse UI."
   },
@@ -3930,9 +3930,6 @@
     "description": "PDF parsing diagnostics and candidate reparse UI."
   },
   "library:reparse.applied": {
-    "description": "PDF parsing diagnostics and candidate reparse UI."
-  },
-  "library:reparse.noInstalled": {
     "description": "PDF parsing diagnostics and candidate reparse UI."
   },
   "library:reparse.cancel": {
@@ -4164,7 +4161,7 @@
     "description": "Web import completion status."
   },
   "library:import.added": {
-    "description": "Toast shown after adding a web document."
+    "description": "Toast shown after adding a local, Zotero, or web document."
   },
   "library:import.failed": {
     "description": "Web import failure status."
@@ -4173,7 +4170,7 @@
     "description": "Toast message when an unsupported file or link is dropped into the library."
   },
   "library:import.zoteroDocument": {
-    "description": "Default display label when importing a document from Zotero."
+    "description": "Temporary display name while a dropped Zotero item is being resolved."
   },
   "library:article.openOriginal": {
     "description": "Button opening the original article in a browser."

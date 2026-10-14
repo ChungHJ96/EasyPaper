@@ -98,7 +98,7 @@ def fetch_url(url: str, client: httpx.Client | None = None) -> FetchResult:
         for redirect_count in range(MAX_REDIRECTS + 1):
             _validate_url(current)
             try:
-                with client.stream("GET", current, headers={"User-Agent": "EasyPaper/1 URL Importer", "Accept": "application/pdf,text/html;q=0.9"}) as response:
+                with client.stream("GET", current, headers={"User-Agent": "HJPaper/1 URL Importer", "Accept": "application/pdf,text/html;q=0.9"}) as response:
                     _validate_peer(response)
                     if response.headers.get("x-amzn-waf-action", "").lower() == "challenge":
                         raise WebImportError("challenge_page", "사이트의 봇 확인 페이지는 가져올 수 없습니다.")
@@ -114,7 +114,7 @@ def fetch_url(url: str, client: httpx.Client | None = None) -> FetchResult:
                         raise WebImportError("access_blocked", "로그인 또는 사이트 접근 권한이 필요합니다.")
                     response.raise_for_status()
                     content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
-                    fd, temp_path = tempfile.mkstemp(prefix="easypaper-url-", suffix=".download")
+                    fd, temp_path = tempfile.mkstemp(prefix="hjpaper-url-", suffix=".download")
                     size = 0
                     prefix = b""
                     try:
@@ -173,7 +173,7 @@ def _download_image(client: httpx.Client, url: str, assets_dir: Path, index: int
     try:
         for redirect_count in range(MAX_REDIRECTS + 1):
             _validate_url(current)
-            with client.stream("GET", current, headers={"User-Agent": "EasyPaper/1 URL Importer"}) as response:
+            with client.stream("GET", current, headers={"User-Agent": "HJPaper/1 URL Importer"}) as response:
                 _validate_peer(response)
                 if response.status_code in {301, 302, 303, 307, 308}:
                     if redirect_count >= MAX_REDIRECTS or not response.headers.get("location"):

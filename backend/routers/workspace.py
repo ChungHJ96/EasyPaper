@@ -16,6 +16,8 @@ class WorkspaceSettingsPatch(BaseModel):
     onboarding_version: Optional[int] = Field(default=None, ge=0)
     preferred_workspace_mode: Optional[str] = None
     document_type_options: Optional[dict] = None
+    theme: Optional[str] = None
+    accent_color: Optional[str] = None
 
 
 @router.get("/document-types")
@@ -42,6 +44,14 @@ async def patch_workspace_settings(
     if mode == "general" and not feature_enabled("general_document_mode"):
         raise HTTPException(status_code=403, detail="일반 문서 모드가 아직 활성화되지 않았습니다.")
 
+    theme = body.theme
+    if theme is not None and theme not in ("light", "dark"):
+        raise HTTPException(status_code=400, detail="theme must be 'light' or 'dark'")
+
+    accent_color = body.accent_color
+    if accent_color is not None and (not isinstance(accent_color, str) or not accent_color.startswith("#")):
+        raise HTTPException(status_code=400, detail="accent_color must be a valid hex color string")
+
     onboarding_version = (
         body.onboarding_version
         if body.onboarding_version is not None
@@ -61,6 +71,8 @@ async def patch_workspace_settings(
         body.document_type_options
         if body.document_type_options is not None
         else current["document_type_options"],
+        theme=theme,
+        accent_color=accent_color,
     )
     result["current_onboarding_version"] = CURRENT_ONBOARDING_VERSION
     return result

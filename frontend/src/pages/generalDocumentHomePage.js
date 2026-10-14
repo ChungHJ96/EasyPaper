@@ -1,6 +1,7 @@
 import { icon } from '../icons.js'
 import { t } from '../i18n.js'
 import { fetchLibrary } from '../library.js'
+import { formatDocumentDisplayTitle } from '../documentTitle.js'
 import '../styles/general-document-home.css'
 
 
@@ -48,7 +49,7 @@ function renderStatCard(type, count) {
 
 function renderRecentDocument(doc) {
   const type = DOCUMENT_TYPES[doc.document_type] || DOCUMENT_TYPES.other
-  const title = doc.metadata?.title || doc.filename || '제목 없는 문서'
+  const title = formatDocumentDisplayTitle(doc) || '제목 없는 문서'
   const pages = Number.isFinite(Number(doc.total_pages)) ? Number(doc.total_pages) : 0
   return `
     <button type="button" class="document-home-recent-row" data-doc-id="${escapeHtml(doc.id)}">

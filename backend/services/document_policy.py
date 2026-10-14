@@ -174,8 +174,9 @@ def feature_enabled(name: str) -> bool:
     }
     if name not in defaults:
         return False
-    env_name = f"EASYPAPER_{name.upper()}"
-    raw = os.getenv(env_name)
+    raw = os.getenv(f"HJPAPER_{name.upper()}")
+    if raw is None:
+        raw = os.getenv(f"EASYPAPER_{name.upper()}")
     return defaults[name] if raw is None else raw.strip().lower() not in {"0", "false", "no", "off"}
 
 

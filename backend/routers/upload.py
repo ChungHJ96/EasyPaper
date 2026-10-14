@@ -49,14 +49,25 @@ def ensure_session(session_id: str) -> bool:
                 parser_version = str(doc.get("content_schema_version") or 1)
             elif parser_engine in {"marker", "mineru"}:
                 from services.reparse import parse_document_isolated
-                payload = parse_document_isolated(pdf_path, parser_engine)
-                pages = payload["pages"]
-                parser_version = payload["parser_version"]
-                from services.cache import save_images_cache
-                save_images_cache(
-                    session_id, pdf_path, payload.get("images") or [],
-                    parser_engine, parser_version,
-                )
+                try:
+                    payload = parse_document_isolated(pdf_path, parser_engine)
+                    pages = payload["pages"]
+                    parser_version = payload["parser_version"]
+                    from services.cache import save_images_cache
+                    save_images_cache(
+                        session_id, pdf_path, payload.get("images") or [],
+                        parser_engine, parser_version,
+                    )
+                except Exception as e:
+                    import logging
+                    logging.getLogger("hjpaper").warning(
+                        "Isolated parser %s failed for %s: %s; falling back to pymupdf",
+                        parser_engine, pdf_path, e,
+                    )
+                    pages = extract_pages(pdf_path, engine="pymupdf")
+                    from services.pdf_diagnostics import parser_version as resolve_parser_version
+                    parser_version = resolve_parser_version("pymupdf")
+                    parser_engine = "pymupdf"
             else:
                 pages = extract_pages(pdf_path, engine=parser_engine)
                 from services.pdf_diagnostics import parser_version as resolve_parser_version
@@ -117,6 +128,17 @@ def require_session_owner(session_id: str, current_user: str) -> dict:
     return session
 
 
+def _restore_sessions_sync():
+    from services.document_tasks import cleanup_orphaned_tasks, recoverable_tasks
+    cleanup_orphaned_tasks()
+    recoverable_doc_ids = {task["doc_id"] for task in recoverable_tasks()}
+    for doc in list_documents():
+        doc_id = doc["id"]
+        job = get_job_status(doc_id)
+        if doc_id in recoverable_doc_ids or (job and job.get("status") == "running"):
+            ensure_session(doc_id)
+
+
 def restore_sessions_from_library():
     """서버 시작 시 미완료 번역 잡이 있는 문서만 세션으로 복원하고 잡을 재개합니다.
 
@@ -133,20 +155,30 @@ def restore_sessions_from_library():
     준비해둘 필요가 없다. job_status.json 존재 여부만 확인하는 건 PDF를
     열지 않는 가벼운 파일 I/O라 문서 수가 많아도 부담이 없다.
     """
-    from services.document_tasks import recoverable_tasks
-    recoverable_doc_ids = {task["doc_id"] for task in recoverable_tasks()}
-    for doc in list_documents():
-        doc_id = doc["id"]
-        job = get_job_status(doc_id)
-        if doc_id in recoverable_doc_ids or (job and job.get("status") == "running"):
-            ensure_session(doc_id)
-
+    _restore_sessions_sync()
     # 미완료 번역 잡과 나머지 영속 작업 재개
     resume_incomplete_jobs(sessions)
     from services.document_tasks import recover_document_tasks
     recover_document_tasks(sessions)
     from services.reparse import recover_reparse_previews
     recover_reparse_previews()
+
+
+async def async_restore_sessions_from_library():
+    """백그라운드에서 비동기로 라이브러리 세션 복원 및 작업 재개를 수행하여,
+    FastAPI 서버가 기동 직후 즉시 HTTP 헬스체크에 응답할 수 있도록 합니다."""
+    import asyncio
+    import logging
+    logger = logging.getLogger(__name__)
+    try:
+        await asyncio.to_thread(_restore_sessions_sync)
+        resume_incomplete_jobs(sessions)
+        from services.document_tasks import recover_document_tasks
+        recover_document_tasks(sessions)
+        from services.reparse import recover_reparse_previews
+        recover_reparse_previews()
+    except Exception as exc:
+        logger.error("Failed to restore library sessions in background: %s", exc, exc_info=True)
 
 
 @router.post("/upload", response_model=UploadAcceptedResponse, status_code=202)
@@ -247,6 +279,8 @@ async def upload_pdf(
     # 생성되지 않은 시점에 서버가 종료되어도 이 정보만으로 실제 파싱과
     # 라이브러리 최종화를 다시 수행할 수 있다.
     from services.document_tasks import create_task
+    from config import get_pdf_parser_engine
+    target_parser_engine = get_pdf_parser_engine()
     parse_options = {
         "filename": file.filename,
         "file_size_mb": file_size_mb,
@@ -263,12 +297,13 @@ async def upload_pdf(
         "document_mode": document_mode,
         "document_type": document_type,
         "classification_method": classification_method,
+        "parser_engine": target_parser_engine,
     }
     parse_task = create_task(session_id, "parse", parse_options, status="queued")
     from services.parse_job import resume_parse_task
     resume_parse_task(
         parse_task["id"], sessions,
-        page_extractor=extract_pages,
+        page_extractor=None,
         metadata_reader=get_pdf_metadata,
         translation_starter=start_job,
         keyword_starter=start_keyword_job,

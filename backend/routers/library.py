@@ -993,7 +993,9 @@ async def get_library_document_images(doc_id: str, current_user: str = Depends(g
         save_images_cache(doc_id, pdf_path, images, doc.get("parser_engine"), doc.get("parser_version"))
         return {"images": images}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"이미지 좌표 추출 실패: {str(e)}")
+        import logging
+        logging.getLogger("hjpaper").warning("Failed to extract images for %s: %s", doc_id, e)
+        return {"images": []}
 
 
 @router.get("/library/{doc_id}/figure-image/{index}")
@@ -1027,23 +1029,27 @@ async def get_library_figure_image(doc_id: str, index: int, current_user: str = 
 async def get_library_references(doc_id: str, current_user: str = Depends(get_current_user)):
     """참고문헌 목록(번호 -> 원문 텍스트)을 반환합니다.
 
-    외부 API 호출 없이 PDF 텍스트만 파싱한다 - 실제 외부 링크 조회는
-    사용자가 본문에서 특정 인용 표기를 클릭했을 때만
-    (/library/{doc_id}/references/{ref_num}) 그때그때 수행한다. 논문 한 편에
-    참고문헌이 수십~백여 개인 경우가 흔한데, 열 때마다 전부 미리 조회하면
-    외부 API 레이트리밋에 바로 걸리고 대부분은 클릭되지도 않아 낭비다.
+    외부 API 호출 없이 PDF 텍스트만 파싱한다. 반환된 목록은
+    본문 인용 표기와 참고문헌 전문을 연결하고 툴팁에 표시하는 데 사용한다.
     """
     doc = require_owned_document(doc_id, current_user)
 
     from services.library import get_page_insight, save_page_insight
 
-    cached = get_page_insight(doc_id, 0, "reference_list")
+    cached = get_page_insight(doc_id, 0, "reference_list_v2")
     if cached is not None:
         try:
             data = json.loads(cached)
-            if isinstance(data, dict) and "references" in data:
-                return data
-            return {"references": data, "start_page": None}
+            refs = data.get("references") if isinstance(data, dict) else data
+            total_pages = doc.get("total_pages", 0) or 0
+            # 만약 5페이지 이상인 문서에서 추출된 참고문헌이 10개 미만이라면
+            # 과거 버그(비-ASCII 문자 중단, 가짜 저자연도 폴백 등)로 인해 왜곡된 캐시일 가능성이 높으므로 재파싱 수행
+            if isinstance(refs, dict) and len(refs) < 10 and total_pages >= 5:
+                cached = None
+            else:
+                if isinstance(data, dict) and "references" in data:
+                    return data
+                return {"references": data, "start_page": None}
         except Exception:
             pass
 
@@ -1062,24 +1068,36 @@ async def get_library_references(doc_id: str, current_user: str = Depends(get_cu
         # 열람)에서 텍스트를 한 번 더 처음부터 추출하게 된다.
         pages = get_cached_pages(doc_id, pdf_path, doc.get("parser_engine"), doc.get("parser_version"))
         if pages is None:
-            pages = await asyncio.to_thread(extract_pages, pdf_path, doc.get("parser_engine"))
-            save_pages_cache(doc_id, pdf_path, pages, doc.get("parser_engine"), doc.get("parser_version"))
+            engine = doc.get("parser_engine") or "pymupdf"
+            if engine in {"marker", "mineru"}:
+                from services.reparse import parse_document_isolated
+                payload = await asyncio.to_thread(parse_document_isolated, pdf_path, engine)
+                pages = payload["pages"]
+                version = payload["parser_version"]
+                from services.cache import save_images_cache
+                save_images_cache(doc_id, pdf_path, payload.get("images") or [], engine, version)
+            else:
+                pages = await asyncio.to_thread(extract_pages, pdf_path, engine)
+                version = doc.get("parser_version")
+            save_pages_cache(doc_id, pdf_path, pages, engine, version)
         
         ref_start_idx = find_reference_start_page_index(pages)
         references = extract_reference_list(pages)
-        if not references and pdf_path and os.path.exists(pdf_path):
+        if (not references or len(references) < 10) and pdf_path and os.path.exists(pdf_path):
             from services.pdf_parser import _extract_pages_pymupdf
             mupdf_pages = await asyncio.to_thread(_extract_pages_pymupdf, pdf_path)
-            references = extract_reference_list(mupdf_pages)
-            if ref_start_idx is None:
-                ref_start_idx = find_reference_start_page_index(mupdf_pages)
+            mupdf_refs = extract_reference_list(mupdf_pages)
+            if len(mupdf_refs) > len(references):
+                references = mupdf_refs
+                if ref_start_idx is None:
+                    ref_start_idx = find_reference_start_page_index(mupdf_pages)
         start_page = (ref_start_idx + 1) if ref_start_idx is not None else None
     except Exception:
         references = {}
         start_page = None
 
     result = {"references": references, "start_page": start_page}
-    save_page_insight(doc_id, 0, "reference_list", json.dumps(result, ensure_ascii=False))
+    save_page_insight(doc_id, 0, "reference_list_v2", json.dumps(result, ensure_ascii=False))
     return result
 
 
@@ -1093,7 +1111,7 @@ async def get_library_pdf_links(doc_id: str, current_user: str = Depends(get_cur
         return {"links": {}}
 
     from services.library import get_page_insight, save_page_insight
-    cached = get_page_insight(doc_id, 0, "pdf_internal_links")
+    cached = get_page_insight(doc_id, 0, "pdf_links_v9")
     if cached is not None:
         try:
             return {"links": json.loads(cached)}
@@ -1107,49 +1125,8 @@ async def get_library_pdf_links(doc_id: str, current_user: str = Depends(get_cur
     except Exception:
         links = {}
 
-    save_page_insight(doc_id, 0, "pdf_internal_links", json.dumps(links, ensure_ascii=False))
+    save_page_insight(doc_id, 0, "pdf_links_v9", json.dumps(links, ensure_ascii=False))
     return {"links": links}
-
-
-@router.get("/library/{doc_id}/references/{ref_num}")
-async def resolve_library_reference(doc_id: str, ref_num: str, current_user: str = Depends(get_current_user)):
-    """특정 번호의 참고문헌을 외부(OpenAlex, 가능하면 arXiv)에서
-    검색해 링크를 반환합니다. 결과(성공/실패 모두)는 캐시해 같은 항목을
-    반복 조회하지 않습니다."""
-    require_owned_document(doc_id, current_user)
-
-    from services.library import get_page_insight, save_page_insight
-
-    cache_suffix = f"v2_{ref_num}"
-    cached = get_page_insight(doc_id, 0, "reference_url", suffix=cache_suffix)
-    if cached is not None:
-        try:
-            data = json.loads(cached)
-        except Exception:
-            data = {}
-        if not data:
-            raise HTTPException(status_code=404, detail="외부에서 일치하는 논문을 찾지 못했습니다.")
-        return data
-
-    ref_list_cached = get_page_insight(doc_id, 0, "reference_list")
-    references = {}
-    if ref_list_cached:
-        try:
-            references = json.loads(ref_list_cached)
-        except Exception:
-            references = {}
-
-    ref_text = references.get(ref_num)
-    if not ref_text:
-        raise HTTPException(status_code=404, detail="해당 번호의 참고문헌을 찾을 수 없습니다.")
-
-    from services.reference_linker import resolve_reference
-    result = await resolve_reference(ref_text)
-    save_page_insight(doc_id, 0, "reference_url", json.dumps(result or {}, ensure_ascii=False), suffix=cache_suffix)
-
-    if not result:
-        raise HTTPException(status_code=404, detail="외부에서 일치하는 논문을 찾지 못했습니다.")
-    return result
 
 
 @router.get("/library/{doc_id}/annotations")
@@ -1263,8 +1240,18 @@ async def reclassify_paper_tags(
         raise HTTPException(status_code=404, detail="PDF 파일을 찾을 수 없습니다.")
     pages = get_cached_pages(doc_id, pdf_path, doc.get("parser_engine"), doc.get("parser_version"))
     if pages is None:
-        pages = await asyncio.to_thread(extract_pages, pdf_path, doc.get("parser_engine"))
-        save_pages_cache(doc_id, pdf_path, pages, doc.get("parser_engine"), doc.get("parser_version"))
+        engine = doc.get("parser_engine") or "pymupdf"
+        if engine in {"marker", "mineru"}:
+            from services.reparse import parse_document_isolated
+            payload = await asyncio.to_thread(parse_document_isolated, pdf_path, engine)
+            pages = payload["pages"]
+            version = payload["parser_version"]
+            from services.cache import save_images_cache
+            save_images_cache(doc_id, pdf_path, payload.get("images") or [], engine, version)
+        else:
+            pages = await asyncio.to_thread(extract_pages, pdf_path, engine)
+            version = doc.get("parser_version")
+        save_pages_cache(doc_id, pdf_path, pages, engine, version)
     title = (doc.get("metadata") or {}).get("title") or doc.get("filename") or ""
     paper_tags = await classify_and_store_paper_tags(doc_id, pages, title, force=True)
     if not paper_tags:

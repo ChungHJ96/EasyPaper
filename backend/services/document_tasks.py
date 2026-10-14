@@ -192,10 +192,32 @@ def reset_failed(task_id: str) -> dict:
     return get_task(task_id)
 
 
+def cleanup_orphaned_tasks() -> None:
+    """Mark tasks left in 'running' state from previous dead processes as failed,
+    and clean up tasks whose parent document no longer exists."""
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE document_tasks SET status = 'failed', last_error_code = 'document_missing' "
+            "WHERE status IN ('queued', 'running', 'retry_wait') "
+            "AND kind != 'parse' "
+            "AND doc_id NOT IN (SELECT id FROM documents)"
+        )
+        conn.execute(
+            "UPDATE document_tasks SET status = 'failed', last_error_code = 'aborted' "
+            "WHERE status = 'running'"
+        )
+        conn.execute(
+            "UPDATE document_task_pages SET status = 'failed' "
+            "WHERE status = 'running'"
+        )
+        conn.commit()
+
+
 def recoverable_tasks() -> list[dict]:
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT id FROM document_tasks WHERE status IN ('queued','running','retry_wait') ORDER BY created_at",
+            "SELECT id FROM document_tasks WHERE status IN ('queued','running','retry_wait') "
+            "AND (doc_id IN (SELECT id FROM documents) OR kind = 'parse') ORDER BY created_at",
         ).fetchall()
     return [task for row in rows if (task := get_task(row["id"]))]
 
@@ -268,7 +290,7 @@ def migrate_legacy_translation(doc_id: str, legacy: dict) -> dict:
     old_status = legacy.get("status", "running")
     status = "running" if old_status == "running" else "succeeded"
     task = create_task(doc_id, "translate", legacy.get("options") or {}, target_pages,
-                       task_id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"easypaper:legacy:{doc_id}")), status=status)
+                       task_id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"hjpaper:legacy:{doc_id}")), status=status)
     completed = set(legacy.get("completed_pages") or [])
     failed = set(legacy.get("failed_pages") or [])
     for page in target_pages:

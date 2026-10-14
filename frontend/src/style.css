@@ -670,6 +670,122 @@ body.toolbar-hidden .panels {
   transform: scale(0.94);
 }
 
+/* ── 원래 읽던 위치 복귀 (Jump Back) 플로팅 알약 ── */
+.viewer-jump-back-pill {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  z-index: 65;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px 4px 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 9999px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28), 0 2px 6px rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(12px);
+  color: var(--text-primary);
+  font-size: 13px;
+  animation: jumpBackPillSlideUp 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: opacity 0.2s ease, transform 0.2s ease, bottom 0.3s ease;
+  user-select: none;
+}
+
+@keyframes jumpBackPillSlideUp {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 14px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+.viewer-jump-back-pill.hidden {
+  display: none !important;
+}
+
+.viewer-jump-back-pill.fade-out {
+  opacity: 0;
+  transform: translate(-50%, 8px) scale(0.96);
+  pointer-events: none;
+}
+
+body.toolbar-pos-bottom .viewer-jump-back-pill {
+  bottom: 76px;
+}
+
+.jump-back-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  cursor: pointer;
+  padding: 4px 6px 4px 2px;
+  font-size: 13px;
+  font-weight: 500;
+  transition: color 0.15s ease;
+}
+
+.jump-back-action-btn:hover {
+  color: var(--accent);
+}
+
+.jump-back-action-btn svg {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.jump-back-shortcut {
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--bg-hover, rgba(255, 255, 255, 0.08));
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin-left: 2px;
+}
+
+.jump-back-dismiss-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: none;
+  border: none;
+  border-radius: 50%;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.jump-back-dismiss-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* 플로팅 내비게이션 복귀 버튼 */
+.floating-nav-btn.jump-back-nav-btn {
+  border-color: var(--accent, #3b82f6);
+  color: var(--accent, #3b82f6);
+}
+
+.floating-nav-btn.jump-back-nav-btn:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 12px rgba(59, 130, 246, 0.35);
+}
+
 /* ── 개별 페이지 쌍 (원문 + 번역 한쌍의 카드) ── */
 .page-pair {
   display: flex;
@@ -1118,6 +1234,20 @@ body:not(.light-theme) .pdf-page-inner canvas {
   color: var(--text-primary);
   word-break: keep-all;
   letter-spacing: -0.01em;
+}
+
+/* 윗첨자(sup) 및 아래첨자(sub) 서식: 텍스트 줄간격(line-height)을 무너뜨리지 않도록 조정 */
+sup, sub {
+  font-size: 75%;
+  line-height: 0;
+  position: relative;
+  vertical-align: baseline;
+}
+sup {
+  top: -0.5em;
+}
+sub {
+  bottom: -0.25em;
 }
 
 /* 원문에서 첫 줄 들여쓰기가 감지된 문단에 적용 (formatTranslationHtml 참고) */
@@ -4113,6 +4243,15 @@ body.light-theme .trans-sentence.sentence-highlight {
   border-radius: 4px !important;
   transition: background-color 0.15s, box-shadow 0.15s;
 }
+/* KaTeX의 \tag{...}/\tag*{...} 번호는 수식 행의 오른쪽 끝을 기준으로
+   absolute positioning된다. 위의 shrink-to-fit inline-block 규칙을 번호
+   수식에도 적용하면 행 폭이 수식 본문만큼 줄어 번호가 지수/분모 위로
+   겹친다. 번호 수식만 정상적인 전체 행 폭을 복원한다. */
+.katex-display-wrap.trans-sentence.katex-display-numbered .katex-display {
+  display: block !important;
+  width: 100% !important;
+  box-sizing: border-box;
+}
 .katex-inline-wrap.trans-sentence {
   display: inline-block !important; /* Preserve inline block layout */
   padding: 0 4px !important;
@@ -6460,6 +6599,76 @@ body.light-theme .sentence-memo-box.color-red {
 body.light-theme .citation-marker-box:hover {
   background-color: rgba(74, 135, 181, 0.15);
 }
+
+/* PDF 원본 임베디드 링크 및 외부 URL 오버레이 박스 */
+.pdf-link-box,
+.uri-marker-box {
+  position: absolute;
+  pointer-events: auto !important;
+  cursor: pointer;
+  border-radius: 2px;
+  box-sizing: border-box;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.pdf-link-box::after {
+  content: '';
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  left: -2px;
+  right: -2px;
+  pointer-events: auto;
+}
+
+.pdf-link-box.pdf-link-ref,
+.pdf-link-box.pdf-link-reference {
+  border-bottom: 1px dotted rgba(74, 135, 181, 0.75);
+}
+.pdf-link-box.pdf-link-ref:hover,
+.pdf-link-box.pdf-link-reference:hover {
+  background-color: rgba(74, 135, 181, 0.20);
+}
+body.light-theme .pdf-link-box.pdf-link-ref:hover,
+body.light-theme .pdf-link-box.pdf-link-reference:hover {
+  background-color: rgba(74, 135, 181, 0.15);
+}
+
+.pdf-link-box.pdf-link-fig,
+.pdf-link-box.pdf-link-figure,
+.pdf-link-box.pdf-link-table,
+.pdf-link-box.pdf-link-eq,
+.pdf-link-box.pdf-link-equation {
+  border-bottom: 1px dashed rgba(168, 85, 247, 0.75);
+}
+.pdf-link-box.pdf-link-fig:hover,
+.pdf-link-box.pdf-link-figure:hover,
+.pdf-link-box.pdf-link-table:hover,
+.pdf-link-box.pdf-link-eq:hover,
+.pdf-link-box.pdf-link-equation:hover {
+  background-color: rgba(168, 85, 247, 0.20);
+}
+body.light-theme .pdf-link-box.pdf-link-fig:hover,
+body.light-theme .pdf-link-box.pdf-link-figure:hover,
+body.light-theme .pdf-link-box.pdf-link-table:hover,
+body.light-theme .pdf-link-box.pdf-link-eq:hover,
+body.light-theme .pdf-link-box.pdf-link-equation:hover {
+  background-color: rgba(168, 85, 247, 0.15);
+}
+
+.uri-marker-box,
+.pdf-link-box.pdf-link-uri {
+  border-bottom: 1px dotted rgba(34, 197, 94, 0.75);
+}
+.uri-marker-box:hover,
+.pdf-link-box.pdf-link-uri:hover {
+  background-color: rgba(34, 197, 94, 0.20);
+}
+body.light-theme .uri-marker-box:hover,
+body.light-theme .pdf-link-box.pdf-link-uri:hover {
+  background-color: rgba(34, 197, 94, 0.15);
+}
+
 /* 인용 표기 호버/클릭 시 뜨는 툴팁 - 참고문헌 원문 + 외부 링크 찾기 +
    Google Scholar 검색을 한 곳에서 보여준다. body에 직접 붙여
    position:fixed로 뷰포트 기준 좌표를 쓴다(PDF 페이지 스크롤 컨테이너
@@ -6505,7 +6714,6 @@ body.light-theme .citation-tooltip {
   color: var(--text-primary);
   margin-right: 2px;
 }
-.citation-tooltip-result,
 .citation-tooltip-scholar-results {
   font-size: 12px;
   line-height: 1.45;
@@ -6513,11 +6721,9 @@ body.light-theme .citation-tooltip {
   padding-top: 8px;
   border-top: 1px solid var(--border);
 }
-.citation-tooltip-result.hidden,
 .citation-tooltip-scholar-results.hidden {
   display: none;
 }
-.citation-tooltip-result a,
 .citation-tooltip-scholar-results a {
   display: flex;
   align-items: flex-start;
@@ -6526,7 +6732,6 @@ body.light-theme .citation-tooltip {
   font-weight: 600;
   text-decoration: none;
 }
-.citation-tooltip-result a:hover,
 .citation-tooltip-scholar-results a:hover {
   text-decoration: underline;
 }
@@ -6540,9 +6745,6 @@ body.light-theme .citation-tooltip {
 }
 .citation-tooltip-result-item > .citation-tooltip-multi-key {
   flex-shrink: 0;
-}
-.citation-tooltip-result-empty {
-  color: var(--text-muted);
 }
 .citation-tooltip-actions {
   display: flex;
@@ -6770,6 +6972,8 @@ body.light-theme .figure-preview-tooltip {
 .figure-preview-tooltip-img {
   display: block;
   width: 100%;
+  max-height: 55vh;
+  object-fit: contain;
   height: auto;
   border-radius: 4px;
   border: 1px solid var(--border-strong);

@@ -329,3 +329,59 @@ def test_author_year_stops_before_appendix_section():
     assert set(refs.keys()) == {"zhu2025"}
     assert "Notably" not in refs["zhu2025"]
     assert "Appendix" not in refs["zhu2025"]
+
+
+def test_parses_plain_numbered_with_unicode_initials():
+    """아이슬란드어 Þ 등 비-ASCII 라틴 대문자로 시작하는 저자명도 평문 번호형 항목으로 온전히 인식해야 한다."""
+    pages = [{"page_num": 1, "text": (
+        "References\n\n"
+        "1. Smith, J. First paper. 2020.\n\n"
+        "2. Þorbjornsson, J.G.; Hauksson, E. Aerial census. 2021.\n\n"
+        "3. Öztürk, B. Marine fauna. 2022."
+    )}]
+    refs = extract_reference_list(pages)
+    assert set(refs.keys()) == {"1", "2", "3"}
+    assert "Þorbjornsson" in refs["2"]
+    assert "Öztürk" in refs["3"]
+
+
+def test_numbered_sequential_tolerates_minor_gap():
+    """특정 번호 하나가 OCR 누락이나 특수문자로 인해 건너뛰어져도(예: 1, 2, 4, 5) 뒤이은 연속 번호가 확인되면 중단하지 않고 수집해야 한다."""
+    pages = [{"page_num": 1, "text": (
+        "References\n\n"
+        "1. Smith, J. Reference 1. 2020.\n\n"
+        "2. Doe, J. Reference 2. 2021.\n\n"
+        "4. Lee, K. Reference 4. 2022.\n\n"
+        "5. Park, S. Reference 5. 2023."
+    )}]
+    refs = extract_reference_list(pages)
+    assert set(refs.keys()) == {"1", "2", "4", "5"}
+
+
+def test_clean_diacritics_normalizes_standalone_characters():
+    from services.pdf_parser import clean_diacritics
+    assert clean_diacritics("Ha\xa8rko\xa8nen") == "Härkönen"
+    assert clean_diacritics("Ba\xa8cklin") == "Bäcklin"
+    assert clean_diacritics("Rige\xb4t") == "Rigét"
+    assert clean_diacritics("Edre\xb4n") == "Edrén"
+
+
+def test_author_year_entries_with_standalone_diacritics():
+    pages = [{"page_num": 1, "text": (
+        "References\n\n"
+        "Freitas, C., Lydersen, C., Fedak, M. A., and Kovacs, K. M. 2008. A simple filter.\n\n"
+        "Ha\xa8rko\xa8nen, T. J. 1987. Inﬂuence of feeding on haul-out patterns.\n\n"
+        "Ha\xa8rko\xa8nen, T., Dietz, R., Reijnders, P., and Teilmann, J. 2006. A review of epidemics."
+    )}]
+    refs = extract_reference_list(pages)
+    assert "freitas2008" in refs
+    assert "härkönen1987" in refs
+    assert "harkonen1987" in refs
+    assert "härkönen2006" in refs
+    assert "harkonen2006" in refs
+    assert "Freitas, C." in refs["freitas2008"]
+    assert "Ha\xa8rko\xa8nen" not in refs["freitas2008"]
+    assert "Härkönen, T. J. 1987" in refs["härkönen1987"]
+    assert "Härkönen, T., Dietz, R." in refs["härkönen2006"]
+
+

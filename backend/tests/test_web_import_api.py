@@ -97,3 +97,49 @@ def test_import_remote_pdf_uses_client_id_and_finishes_parse(test_client, isolat
     assert response.json()["content_kind"] == "pdf"
     assert isolated_dirs["db"].db_get_document(upload_id)["source_origin"] == "web"
     upload.sessions.pop(upload_id, None)
+
+
+def test_import_zotero_link_copies_source_and_finishes_parse(test_client, isolated_dirs, monkeypatch, tmp_path):
+    import fitz
+    from routers import primer
+    from routers import upload
+    from routers import web_import as router
+
+    source = tmp_path / "linked-zotero-paper.pdf"
+    document = fitz.open()
+    page = document.new_page()
+    page.insert_text((72, 72), "Linked Zotero PDF import integration test.")
+    document.save(source)
+    document.close()
+
+    monkeypatch.setattr(router, "LIBRARY_DIR", str(isolated_dirs["library_dir"]))
+    monkeypatch.setattr(router, "UPLOAD_DIR", str(isolated_dirs["upload_dir"]))
+    monkeypatch.setattr(router, "resolve_zotero_link", lambda _link: str(source))
+    monkeypatch.setattr(primer, "_ensure_generation_started", lambda *args, **kwargs: None)
+    upload_id = "123e4567-e89b-42d3-a456-426614174012"
+    response = test_client.post("/api/import-url", json={
+        "url": "zotero://select/library/items/5C3FM777",
+        "upload_id": upload_id,
+        "translation_mode": "manual",
+    })
+
+    assert response.status_code == 200, response.text
+    assert response.json()["session_id"] == upload_id
+    assert response.json()["source_origin"] == "zotero"
+    assert source.is_file(), "Zotero source must be preserved"
+    assert (isolated_dirs["upload_dir"] / upload_id / "document.pdf").is_file()
+    assert isolated_dirs["db"].db_get_document(upload_id)["source_origin"] == "zotero"
+    upload.sessions.pop(upload_id, None)
+
+
+def test_missing_zotero_link_does_not_fall_through_to_web_fetch(test_client, monkeypatch):
+    from routers import web_import as router
+
+    monkeypatch.setattr(router, "resolve_zotero_link", lambda _link: None)
+    monkeypatch.setattr(router, "fetch_url", lambda _url: pytest.fail("must not fetch zotero:// as a web URL"))
+    response = test_client.post("/api/import-url", json={
+        "url": "zotero://select/library/items/NOFILE00",
+        "translation_mode": "manual",
+    })
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "zotero_not_found"

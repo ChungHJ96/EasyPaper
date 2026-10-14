@@ -48,7 +48,7 @@ CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "")
 # pool"로 분류된다. 선택 사항이라 비워둬도 정상 동작한다.
 OPENALEX_MAILTO = os.getenv("OPENALEX_MAILTO", "")
 
-PDF_PARSER_ENGINE = os.getenv("PDF_PARSER_ENGINE", "opendataloader")
+PDF_PARSER_ENGINE = os.getenv("PDF_PARSER_ENGINE", "mineru")
 
 MAX_FILE_SIZE_MB = int(os.getenv("MAX_FILE_SIZE_MB", "50"))
 SESSION_TTL_HOURS = int(os.getenv("SESSION_TTL_HOURS", "24"))
@@ -203,7 +203,7 @@ def update_system_settings(
     gemini_api_key: str = "",
     claude_api_key: str = "",
     openalex_mailto: str = "",
-    pdf_parser_engine: str = "opendataloader",
+    pdf_parser_engine: str = "mineru",
     analysis_provider: str = "",
     analysis_model: str = "",
     library_provider: str = "",
@@ -298,7 +298,7 @@ if APP_PASSWORD_HASH == DEFAULT_PASSWORD_HASH:
     print(
         "\n" + "!" * 70 +
         "\n[보안 경고] 기본 관리자 계정(admin / admin)을 그대로 사용 중입니다.\n"
-        "이 값은 EasyPaper를 설치한 모든 사용자가 동일하게 공유하는 공개된\n"
+        "이 값은 HJPaper를 설치한 모든 사용자가 동일하게 공유하는 공개된\n"
         "기본값이라, 외부에서 접근 가능한 환경이라면 즉시 로그인 후 설정\n"
         "화면에서 아이디/비밀번호를 변경해주세요.\n"
         + "!" * 70 + "\n"
@@ -466,7 +466,7 @@ os.makedirs(LIBRARY_DIR, exist_ok=True)
 
 # App host & port configuration
 APP_HOST = os.getenv("APP_HOST", "0.0.0.0")
-APP_PORT = int(os.getenv("APP_PORT", "8000"))
+APP_PORT = int(os.getenv("APP_PORT", "8008"))
 
 # Antigravity/Claude Code/Codex CLI 기본 설치 경로. 예전에는 이 프로젝트를
 # 개발한 서버 전용 절대경로(/home/ubuntu/.local/bin/...)가 박혀 있어서 다른

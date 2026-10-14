@@ -1379,12 +1379,18 @@ async def stream_claude_code(prompt: str, model: str = None, session_id: str = N
         orig_credentials = os.path.expanduser("~/.claude/.credentials.json")
         dest_credentials = os.path.join(claude_dir, ".credentials.json")
         if os.path.exists(orig_credentials) and not os.path.exists(dest_credentials):
-            shutil.copy2(orig_credentials, dest_credentials)
+            try:
+                shutil.copy2(orig_credentials, dest_credentials)
+            except OSError:
+                pass
 
         orig_settings = os.path.expanduser("~/.claude/settings.json")
         dest_settings = os.path.join(claude_dir, "settings.json")
         if os.path.exists(orig_settings) and not os.path.exists(dest_settings):
-            shutil.copy2(orig_settings, dest_settings)
+            try:
+                shutil.copy2(orig_settings, dest_settings)
+            except OSError:
+                pass
 
         # ~/.claude/ 안의 credentials/settings만으로는 부족하다 - 최신 Claude Code CLI는
         # 최상위 ~/.claude.json(계정/세션 메타데이터)도 있어야 로그인 상태로 인식한다.
@@ -1393,7 +1399,10 @@ async def stream_claude_code(prompt: str, model: str = None, session_id: str = N
         orig_top_level_config = os.path.expanduser("~/.claude.json")
         dest_top_level_config = os.path.join(home_dir, ".claude.json")
         if os.path.exists(orig_top_level_config) and not os.path.exists(dest_top_level_config):
-            shutil.copy2(orig_top_level_config, dest_top_level_config)
+            try:
+                shutil.copy2(orig_top_level_config, dest_top_level_config)
+            except OSError:
+                pass
 
         env["HOME"] = home_dir
 
@@ -2180,11 +2189,18 @@ def _parse_json_array_response(raw: str, required_key: str = "concept") -> list:
     기본값 "concept"은 extract_paper_concepts 계열이 쓰던 것 그대로이며,
     다른 배열 형태(예: 추천 논문의 "title")를 검증할 때는 이 값을 바꿔 넣는다."""
     text = (raw or "").strip()
-    text = re.sub(r"^```(?:json)?\s*", "", text)
-    text = re.sub(r"\s*```$", "", text)
-    text = text.strip()
+    cleaned = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*```$", "", cleaned).strip()
 
-    parsed = json.loads(text)
+    try:
+        parsed = json.loads(cleaned)
+    except (json.JSONDecodeError, TypeError):
+        start = text.find("[")
+        end = text.rfind("]")
+        if start != -1 and end != -1 and end > start:
+            parsed = json.loads(text[start:end + 1].strip())
+        else:
+            raise
     if not isinstance(parsed, list):
         raise ValueError("JSON 응답이 배열이 아닙니다.")
     for item in parsed:

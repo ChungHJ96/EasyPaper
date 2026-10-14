@@ -9,6 +9,7 @@
 import './../styles/dashboard.css'
 import '../styles/reading-history.css'
 import { fetchLibraryDashboard, fetchLibraryTimeline, fetchReadingRecommendations, fetchCachedReadingRecommendations, fetchLibrary, fetchLibraryGraph, fetchReadingTimeStats, fetchReadingAnalyticsSummary } from '../library.js'
+import { formatDocumentDisplayTitle } from '../documentTitle.js'
 import { icon } from '../icons.js'
 import { readPageCount, lastActivityIso, hasReadActivity, computeStreakDays, todayKey, addDaysKey, isWithinDaysLocal } from '../readPages.js'
 import { periodStats, sumSecondsByDayRange, formatDuration, deltaDurationHtml, CATEGORY_LABEL, CATEGORY_COLOR_VAR, CATEGORY_ORDER } from './readingHistoryPage.js'
@@ -302,7 +303,7 @@ function renderProgressSummaryCard(events, heatmap, weeklySeconds, prevWeeklySec
         </div>
         <div class="dash-summary-box">
           <div class="dash-summary-value dash-summary-value-text">${isGeneralDocumentMode
-            ? escapeHtml(truncateLabel(recentDocument?.metadata?.title || recentDocument?.filename || '—', 12))
+            ? escapeHtml(truncateLabel(formatDocumentDisplayTitle(recentDocument) || '—', 12))
             : (focusTopic ? escapeHtml(truncateLabel(focusTopic.name, 12)) : '—')}</div>
           <div class="dash-summary-label">${isGeneralDocumentMode ? '최근 읽은 문서' : '집중 주제'}</div>
         </div>
@@ -340,7 +341,7 @@ function renderRecentPapersCard(docs, isGeneralDocumentMode = false) {
       ${read.length === 0 ? emptyNote(isGeneralDocumentMode ? '아직 읽음으로 표시한 문서가 없습니다.' : '아직 읽음으로 표시한 논문이 없습니다.') : `
       <ul class="dash-paper-list">
         ${read.map(d => {
-          const title = (d.metadata && d.metadata.title) || d.filename
+          const title = formatDocumentDisplayTitle(d)
           const isDone = d.metadata?.read === true
           const total = d.total_pages || 1
           const lastPage = d.metadata?.last_page

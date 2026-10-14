@@ -402,3 +402,44 @@ def test_unrelated_unlabeled_regions_are_not_merged(tmp_path):
     result = extract_pdf_images(str(path))
     unlabeled = [r for r in result if not r.get("label")]
     assert len(unlabeled) == 2
+
+
+def test_chapter_based_figure_numbering(tmp_path):
+    """책/챕터 형식의 'Fig. 10.1', 'Figure 10.2' 같은 점(dot) 포함 번호가
+    'Figure 10'으로 잘리지 않고 온전한 'Figure 10.1', 'Figure 10.2'로 인식되어야 한다."""
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+
+    r1 = fitz.Rect(50, 50, 250, 250)
+    page.draw_rect(r1, color=(0, 0, 0), width=1.5)
+    page.insert_text((50, 270), "Fig. 10.1 Harbor seal distribution along coastal habitats.", fontsize=9)
+
+    r2 = fitz.Rect(50, 350, 250, 550)
+    page.draw_rect(r2, color=(0, 0, 0), width=1.5)
+    page.insert_text((50, 570), "Figure 10.2 Harbor seals on various haulout site habitats.", fontsize=9)
+
+    path = tmp_path / "chapter_figures.pdf"
+    doc.save(str(path))
+    doc.close()
+
+    result = extract_pdf_images(str(path))
+    labels = {r.get("label") for r in result}
+    assert "Figure 10.1" in labels
+    assert "Figure 10.2" in labels
+    assert "Figure 10" not in labels
+
+
+def test_korean_caption_recognition():
+    """한국어 논문/보고서의 '그림 10.1', '표 2.3' 같은 캡션도 올바르게 인식되어야 한다."""
+    from services.pdf_parser import _match_label_from_caption_text
+
+    lbl1, cap1 = _match_label_from_caption_text("그림 10.1 해양 생태계 조사 결과")
+    assert lbl1 == "Figure 10.1"
+
+    lbl2, cap2 = _match_label_from_caption_text("표 2.3 서식지별 개체수 통계")
+    assert lbl2 == "Table 2.3"
+
+    lbl3, cap3 = _match_label_from_caption_text("그림 5. 모델 구조")
+    assert lbl3 == "Figure 5"
+
+
